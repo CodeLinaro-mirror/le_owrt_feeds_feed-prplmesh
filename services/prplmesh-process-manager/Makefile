@@ -54,6 +54,10 @@ define Package/$(PKG_NAME)/install
 
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(LN) amxrt $(1)/usr/bin/prplmesh-process-manager
+
+	if [ -d ./files ]; then \
+		$(CP) ./files/* $(1)/; \
+	fi
 endef
 
 define Package/$(PKG_NAME)/config
