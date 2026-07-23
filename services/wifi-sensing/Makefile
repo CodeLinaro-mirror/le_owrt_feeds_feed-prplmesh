@@ -3,13 +3,13 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=wifi-sensing
-PKG_VERSION:=v0.6.1
+PKG_VERSION:=v0.6.2
 SHORT_DESCRIPTION:=WiFi Sensing
 
-PKG_SOURCE:=wifi-sensing-v0.6.1.tar.gz
-PKG_SOURCE_URL:=https://gitlab.com/prpl-foundation/prplmesh/wifi-sensing/-/archive/v0.6.1
-PKG_HASH:=d518dd596d8c1615ef79540d02e062a5678ed8b097a5e30c5b66f842696d331e
-PKG_BUILD_DIR:=$(BUILD_DIR)/wifi-sensing-v0.6.1
+PKG_SOURCE:=wifi-sensing-v0.6.2.tar.gz
+PKG_SOURCE_URL:=https://gitlab.com/prpl-foundation/prplmesh/wifi-sensing/-/archive/v0.6.2
+PKG_HASH:=d5cdec8e6e5168d2751a5a97ac859c0ad674b682bf8af1b98e22267736b12453
+PKG_BUILD_DIR:=$(BUILD_DIR)/wifi-sensing-v0.6.2
 PKG_MAINTAINER:=Soft At Home <support.opensource@softathome.com>
 PKG_LICENSE:=BSD-2-Clause-Patent
 PKG_LICENSE_FILES:=LICENSE
