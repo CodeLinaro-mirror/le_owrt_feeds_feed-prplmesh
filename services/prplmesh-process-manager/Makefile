@@ -43,6 +43,7 @@ define Package/$(PKG_NAME)
 	DEPENDS += +libamxd
 	DEPENDS += +libamxo
 	DEPENDS += +libsahtrace
+	DEPENDS += +tr181-firewall
 endef
 
 define Package/$(PKG_NAME)/description
