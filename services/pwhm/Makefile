@@ -3,13 +3,14 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=pwhm
-PKG_VERSION:=v7.29.8
+PKG_VERSION:=bugfix_PPW-2270-memory-leak-fix
 SHORT_DESCRIPTION:=prplMesh WHM
 
-PKG_SOURCE:=pwhm-v7.29.8.tar.gz
-PKG_SOURCE_URL:=https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/archive/v7.29.8
-PKG_HASH:=e08c403c7b292acef794c9d5720d0ae65ba2adcc958cc96b4e5f8fd549fda440
-PKG_BUILD_DIR:=$(BUILD_DIR)/pwhm-v7.29.8
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_VERSION:=bugfix/PPW-2270-memory-leak-fix
+PKG_SOURCE_URL:=https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm.git
+PKG_MIRROR_HASH:=skip
+PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 PKG_MAINTAINER:=Soft At Home <support.opensource@softathome.com>
 PKG_LICENSE:=BSD-2-Clause-Patent
 PKG_LICENSE_FILES:=LICENSE
