@@ -84,7 +84,7 @@
                     parameter ModesAvailable = "None,WPA2-Personal,WPA3-Personal,WPA3-Personal-Transition,WPA3-Personal-Compatibility,OWE";
                     parameter ModeEnabled = "WPA3-Personal-Transition";
 {% endif %}
-                    parameter KeyPassPhrase = "password";
+                    parameter KeyPassphrase = "password";
                 }
                 object WPS {
                     parameter ConfigMethodsEnabled = "PhysicalPushButton,VirtualPushButton,Display,VirtualDisplay,PIN";
