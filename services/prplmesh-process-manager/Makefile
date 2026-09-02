@@ -1,13 +1,13 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=prplmesh-process-manager
-PKG_VERSION:=v0.3.0
+PKG_VERSION:=v0.4.0
 PKG_RELEASE:=1
 
-PKG_SOURCE:=prplmesh-process-manager-v0.3.0.tar.gz
-PKG_SOURCE_URL:=https://gitlab.com/prpl-foundation/prplmesh/prplmesh-process-manager/-/archive/v0.3.0
-PKG_HASH:=af457b31571c1c04b1dc428ff620b9721351d3c87e2e27984b4764818a8986de
-PKG_BUILD_DIR:=$(BUILD_DIR)/prplmesh-process-manager-v0.3.0
+PKG_SOURCE:=prplmesh-process-manager-v0.4.0.tar.gz
+PKG_SOURCE_URL:=https://gitlab.com/prpl-foundation/prplmesh/prplmesh-process-manager/-/archive/v0.4.0
+PKG_HASH:=1893a240d3650273831d2389e048b9502ab389f5b0469ebb1d8d7285103ce65b
+PKG_BUILD_DIR:=$(BUILD_DIR)/prplmesh-process-manager-v0.4.0
 
 PKG_LICENSE:=BSD-2-Clause-Patent
 PKG_LICENSE_FILES:=LICENSE
