@@ -71,6 +71,14 @@ config SAH_WLD_ROOT_OBJ_PREFIX
     default "Device."
     depends on SAH_WLD_ENABLE_USP_SERVER_SOCKET
 
+config SAH_WLD_PROBE_REQ_CAPS
+    bool "Store probe request capabilities per associated device"
+    default n
+
+config SAH_WLD_FLASH_OPTIMIZATION
+    bool "Optimize pwhm for flash footprint"
+    default n
+
 config SAH_WLD_PROCESS_MANAGER
     bool "Disable autostart in PWHM when Process Manager enabled"
     default y
