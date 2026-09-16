@@ -3,13 +3,14 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=pwhm
-PKG_VERSION:=v7.29.19
+PKG_VERSION:=feature_PPM-3821-Retrive-BSS-Cache-Results
 SHORT_DESCRIPTION:=prplMesh WHM
 
-PKG_SOURCE:=pwhm-v7.29.19.tar.gz
-PKG_SOURCE_URL:=https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/archive/v7.29.19
-PKG_HASH:=e8d1ae179f54f5b866bbe302a1d9dd1608a34f498031c411b21e1e527d6cc36b
-PKG_BUILD_DIR:=$(BUILD_DIR)/pwhm-v7.29.19
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_VERSION:=feature/PPM-3821-Retrive-BSS-Cache-Results
+PKG_SOURCE_URL:=https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm.git
+PKG_MIRROR_HASH:=skip
+PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 PKG_MAINTAINER:=Soft At Home <support.opensource@softathome.com>
 PKG_LICENSE:=BSD-2-Clause-Patent
 PKG_LICENSE_FILES:=LICENSE
