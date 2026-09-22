@@ -28,6 +28,20 @@ config PRPL_CONTROLLER_ROOT_PATH
         it to something else.
         This may be helpful when several third-party packages have something in Device.WiFi.
 
+config PRPLMESH_BML
+    bool "Build the BML management interface"
+    default y if !PRPLMESH_ENABLE_AMBIORIX_UBUS_BACKEND
+    default n
+    help
+        Builds the BML management interface: libbml, the controller-side
+        handlers and listener task, and the BML and CLI codecs. Nothing in
+        the runtime uses it; enable it for the BML SDK, for beerocks_cli
+        (PRPLMESH_BEEROCKS_CLI), or for pre-association steering on ugw
+        and rdkb.
+
+        Defaults to y when PRPLMESH_ENABLE_AMBIORIX_UBUS_BACKEND is off,
+        since prplMesh refuses a controller with no management interface.
+
 config PRPLMESH_VENDOR_EXTENSIONS
     bool "Build vendor-specific TLV extensions (Airties)"
     default n

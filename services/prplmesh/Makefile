@@ -23,6 +23,7 @@ PKG_CONFIG_DEPENDS:= \
 	CONFIG_TARGET_brcmbca \
 	CONFIG_USE_PRPLMESH_WHM \
 	CONFIG_PRPLMESH_ENABLE_UNIT_TESTS \
+	CONFIG_PRPLMESH_BML \
 	CONFIG_PRPLMESH_VENDOR_EXTENSIONS \
 	CONFIG_PRPLMESH_ENABLE_AMBIORIX_UBUS_BACKEND
 
@@ -150,6 +151,16 @@ ifeq ($(CONFIG_PRPLMESH_ENABLE_UNIT_TESTS),y)
 	CMAKE_OPTIONS += -DBUILD_TESTS=ON
 endif
 
+ifeq ($(CONFIG_PRPLMESH_BML),y)
+	CMAKE_OPTIONS += -DPRPLMESH_BML=ON
+else ifneq ($(CONFIG_PRPLMESH_ENABLE_AMBIORIX_UBUS_BACKEND),y)
+	# A saved .config keeps the Kconfig default from applying; the controller
+	# needs a management interface, so without the data model force BML on.
+	CMAKE_OPTIONS += -DPRPLMESH_BML=ON
+else
+	CMAKE_OPTIONS += -DPRPLMESH_BML=OFF
+endif
+
 ifeq ($(CONFIG_PRPLMESH_VENDOR_EXTENSIONS),y)
 	CMAKE_OPTIONS += -DPRPLMESH_VENDOR_EXTENSIONS=ON
 else
@@ -163,8 +174,10 @@ endif
 define Build/InstallDev
 	$(INSTALL_DIR) $(1)/usr/lib
 	$(INSTALL_DIR) $(1)/usr/include
-	$(CP) $(PKG_INSTALL_DIR)/opt/prplmesh/lib/libbml* $(1)/usr/lib/
-	$(CP) $(PKG_INSTALL_DIR)/opt/prplmesh/include/beerocks/bml $(1)/usr/include/
+	[ ! -e $(PKG_INSTALL_DIR)/opt/prplmesh/include/beerocks/bml ] || { \
+		$(CP) $(PKG_INSTALL_DIR)/opt/prplmesh/lib/libbml* $(1)/usr/lib/; \
+		$(CP) $(PKG_INSTALL_DIR)/opt/prplmesh/include/beerocks/bml $(1)/usr/include/; \
+	}
 endef
 
 define Package/prplmesh/install
