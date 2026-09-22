@@ -96,11 +96,15 @@ start_service() {
         register_service "prplmesh_controller" "${PRPLMESH_DIR}/bin/beerocks_controller"
     fi
     register_service "prplmesh_agent" "${PRPLMESH_DIR}/bin/beerocks_agent"
-    register_service "prplmesh_vendor_message" "${PRPLMESH_DIR}/bin/beerocks_vendor_message"
+    if [ -x "${PRPLMESH_DIR}/bin/beerocks_vendor_message" ]; then
+        register_service "prplmesh_vendor_message" "${PRPLMESH_DIR}/bin/beerocks_vendor_message"
+    fi
 }
 
 stop_service() {
-    deregister_service "prplmesh_vendor_message"
+    if [ -x "${PRPLMESH_DIR}/bin/beerocks_vendor_message" ]; then
+        deregister_service "prplmesh_vendor_message"
+    fi
     deregister_service "prplmesh_agent"
     deregister_service "prplmesh_controller"
     deregister_service "prplmesh_transport"
