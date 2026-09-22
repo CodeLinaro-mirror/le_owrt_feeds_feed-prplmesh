@@ -27,3 +27,13 @@ config PRPL_CONTROLLER_ROOT_PATH
         Set the root datamodel to be used, by default will be set to X_PRPLWARE-COM_WiFiController, unless if any project changes
         it to something else.
         This may be helpful when several third-party packages have something in Device.WiFi.
+
+config PRPLMESH_VENDOR_EXTENSIONS
+    bool "Build vendor-specific TLV extensions (Airties)"
+    default n
+    help
+        Builds libmulti_vendor and the beerocks_vendor_message daemon,
+        roughly 150 KB (x86_64 musl). Enable it on products managed by an
+        Airties controller. When off, no Airties TLV is added to outgoing
+        messages and inbound Airties requests (reboot, factory reset) are
+        not acted on; generic vendor TLV parsing is unaffected.
