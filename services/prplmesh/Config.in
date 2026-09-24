@@ -1,3 +1,5 @@
+select PACKAGE_ebtables
+
 config PRPLMESH_HAS_WIRELESS_STA
     bool "Include wireless STA support (intel_mips platforms)"
     depends on TARGET_intel_mips || TARGET_intel_x86
