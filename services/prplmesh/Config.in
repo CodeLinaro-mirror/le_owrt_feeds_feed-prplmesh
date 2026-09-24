@@ -42,6 +42,15 @@ config PRPLMESH_BML
         Defaults to y when PRPLMESH_ENABLE_AMBIORIX_UBUS_BACKEND is off,
         since prplMesh refuses a controller with no management interface.
 
+config PRPLMESH_CLI
+    bool "Build the prplmesh_cli diagnostic tool"
+    default y
+    depends on PRPLMESH_ENABLE_AMBIORIX_UBUS_BACKEND
+    help
+        Builds prplmesh_cli, the diagnostic tool that reads the TR-181 data
+        model. The cram tests and the boardfarm harness read the connection
+        map through it. Requires PRPLMESH_ENABLE_AMBIORIX_UBUS_BACKEND.
+
 config PRPLMESH_BEEROCKS_CLI
     bool "Build the beerocks_cli diagnostic tool"
     default n
