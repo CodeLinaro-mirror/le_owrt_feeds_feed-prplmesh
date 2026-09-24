@@ -4,7 +4,7 @@ PKG_NAME:=prplmesh
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_VERSION:=56a0c875fbde0088206f103f826a1878cf1b6f58
+PKG_SOURCE_VERSION:=50709ddbb05798e63d3ebeb9239d502f38649712
 PKG_SOURCE_URL:=https://gitlab.com/prpl-foundation/prplmesh/prplMesh.git
 PKG_MIRROR_HASH:=3abdf85934ee2071dc4908b26bce7f2497013f259329ee96f941ca99b25e77d6
 PKG_SOURCE_DATE:=2026-09-26
@@ -69,7 +69,7 @@ define Package/prplmesh
 		+!(TARGET_intel_x86||TARGET_intel_mips):kmod-sched-act-vlan \
 		+!(TARGET_intel_x86||TARGET_intel_mips):kmod-sched-core \
 		+!(TARGET_intel_x86||TARGET_intel_mips):kmod-sched-flower \
-		+!(TARGET_intel_x86||TARGET_intel_mips):kmod-sched-prio 
+		+!(TARGET_intel_x86||TARGET_intel_mips):kmod-sched-prio
 #	non-intel_x86 neither non-intel_mips neither broadcom dependencies:
 	DEPENDS+= \
 		+!(TARGET_intel_x86||TARGET_intel_mips||TARGET_brcmbca||TARGET_ipq95xx):hostapd-openssl \
