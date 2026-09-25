@@ -69,3 +69,19 @@ config PRPLMESH_VENDOR_EXTENSIONS
         Airties controller. When off, no Airties TLV is added to outgoing
         messages and inbound Airties requests (reboot, factory reset) are
         not acted on; generic vendor TLV parsing is unaffected.
+
+config PRPLMESH_FLASH_OPTIMIZATION
+    bool "Optimize prplMesh for flash footprint"
+    default n
+    help
+        Builds prplMesh with FLASH_OPTIMIZATION=ON: the generated TLV
+        codecs log through an out-of-line sink and share their guard
+        code, easylogging's stream operators are defined once in
+        libelpp, and the tree is built without unwind tables and with
+        unreachable sections dropped. libtlvf and libbtlvf are roughly
+        half their default size.
+
+        Trade-offs: codec log lines report tlvflogging.cpp instead of
+        their own file and line, print doubles through std::to_string
+        and drop std::endl; the generated init() symbols are hidden;
+        and without unwind tables no backtrace can be produced.
