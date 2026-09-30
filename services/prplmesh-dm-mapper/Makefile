@@ -5,9 +5,9 @@ PKG_VERSION:=2025Q2
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_VERSION:=feature/FEAT-498-prplrdkb-support-2025Q2-Rev
+PKG_SOURCE_VERSION:=feature/FEAT-498-rebase
 PKG_SOURCE_URL:=https://gitlab.com/prpl-foundation/prplmesh/prplmesh-dm-mapper.git
-PKG_MIRROR_HASH:=cad3cdfbaa70c6aaff787dfb9094141d5bf1a12514ad9493c0b3e94f3a8b80a3
+PKG_MIRROR_HASH:=97ef2b8724dcd7ba111f5eee2d83dea19f990116c019332115c9ae3f4dfaab4d
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 
 
