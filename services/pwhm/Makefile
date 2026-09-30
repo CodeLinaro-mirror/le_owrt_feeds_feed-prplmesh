@@ -7,9 +7,9 @@ PKG_VERSION:=2025Q2
 SHORT_DESCRIPTION:=prplMesh WHM
 
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_VERSION:=feature/FEAT-498-prplrdkb-support-2025Q2-Rev
+PKG_SOURCE_VERSION:=feature/FEAT-498-testing
 PKG_SOURCE_URL:=https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm.git
-PKG_MIRROR_HASH:=230da4b87c7088021f4317ef19caf72413ed5f71acb035b6a5612686bc18ffd2
+PKG_MIRROR_HASH:=3f5992ba6d0f64a71e2c5d56121167d07201d32b00cf5da40c5bd06b44ab8ac9
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 PKG_MAINTAINER:=Soft At Home <support.opensource@softathome.com>
 PKG_LICENSE:=BSD-2-Clause-Patent
