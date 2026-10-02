@@ -1,0 +1,14 @@
+%populate {
+    object 'WiFi' {
+        object 'DaemonMgt' {
+            object 'Daemon' {
+                object 'wpa_supplicant' {
+                    object ExecutionSettings {
+                        parameter UseGlobalInstance = "On";
+                    }
+                }
+            }
+        }
+    }
+}
+
