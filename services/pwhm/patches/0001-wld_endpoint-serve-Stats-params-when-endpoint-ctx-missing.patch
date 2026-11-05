@@ -1,0 +1,46 @@
+From 83caacfce70a22e7ea71490939ff1354104424fd Mon Sep 17 00:00:00 2001
+From: Junjie Zhang <junjie.zhang@actiontec.com>
+Date: Sat, 26 Sep 2026 08:44:16 +0000
+Subject: [PATCH] wld_endpoint: serve Stats params when endpoint ctx missing
+
+A runtime-added EndPoint instance is only functional after being linked
+to an SSID: wld_ep_addInstance_oaf resolves the SSID by instance name
+and silently bails when no matching SSID exists, leaving the instance
+without its T_EndPoint context.
+
+In that state _wld_endpoint_getStats_orf returned ok with an empty
+result set, so Device.WiFi.EndPoint.<i>.Stats. read back as an object
+with zero parameters, although all Stats parameters are statically
+declared in wld_endpoint.odl.
+
+Fall back to the standard amxd_action_object_read when the endpoint
+context is absent, so the declared parameters are reported with their
+current values.
+
+Fixes: PPW-2446
+Signed-off-by: Junjie Zhang <junjie.zhang@actiontec.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/83caacfce70a22e7ea71490939ff1354104424fd]
+---
+ src/wld_endpoint.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/src/wld_endpoint.c b/src/wld_endpoint.c
+index 0029b08105d1..cf78887d502c 100644
+--- a/src/wld_endpoint.c
++++ b/src/wld_endpoint.c
+@@ -579,8 +579,13 @@ amxd_status_t _wld_endpoint_getStats_orf(amxd_object_t* const object,
+     }
+     ASSERT_NOT_NULL(object, amxd_status_ok, ME, " obj is NULL");
+     T_EndPoint* pEP = wld_ep_fromObj(amxd_object_get_parent(object));
+-    ASSERTI_NOT_NULL(pEP, amxd_status_ok, ME, "EndPoint not present");
+-
++    if(pEP == NULL) {
++        // Runtime-added EndPoint not yet linked to an SSID has no context:
++        // fall back to standard read so the declared Stats params are served.
++        SAH_TRACEZ_INFO(ME, "EndPoint ctx not present, standard read fallback");
++        return amxd_action_object_read(object, param, reason, args,
++                                       action_retval, priv);
++    }
+ 
+     pEP->onActionReadCtx.minRefreshPeriodMs = wld_config_getMinStatsRefreshPeriodMs();
+ 
