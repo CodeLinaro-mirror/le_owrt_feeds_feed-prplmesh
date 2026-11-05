@@ -1,0 +1,61 @@
+From 20f51b1349fa8f6cf730f8cc2062b0af8ff4bd6f Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Mon, 14 Sep 2026 12:33:19 +0200
+Subject: [PATCH 26/41] endpoint: fix dm trans error when pushing EP assoc
+ stats
+
+Problem:
+- systematic issue:
+wlan2 : trans apply failure - (s_writeAssocStats@wld_endpoint.c:402)
+
+Cause:
+- transaction was pushing string value to uint32 typed param
+
+Fix:
+- change the dm param type to uint64 to fix time_t extended value
+- adapt the transaction req bulding code
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/e695508a83a476af2360873e8329d5ca1b987397]
+---
+ odl/wld_endpoint.odl | 4 ++--
+ src/wld_endpoint.c   | 4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/odl/wld_endpoint.odl b/odl/wld_endpoint.odl
+index 45ac5833080d58c3efafb310efb394a6337e68c2..7243d336201221e3f64bc9b5e5c3c6a5bd440391 100644
+--- a/odl/wld_endpoint.odl
++++ b/odl/wld_endpoint.odl
+@@ -838,14 +838,14 @@
+ 			 * is not available at time of association.
+ 			 * @version 10.0
+ 			 */
+-			%read-only uint32 AssocTime;
++			%read-only uint64 AssocTime;
+ 			
+ 			/**
+ 			 * The number of seconds after boot that the endpoint last disassociated.
+ 			 * This is expressed in seconds after boot, to allow comparison with AssocTime.
+ 			 * @version 10.0
+ 			 */
+-			%read-only uint32 DisassocTime;
++			%read-only uint64 DisassocTime;
+ 		}
+ 
+ 		/** When this is toggled, we must check for updating the full
+diff --git a/src/wld_endpoint.c b/src/wld_endpoint.c
+index 60a98a120e2f274a840fea21dec83b4d0214d358..43e285f433cff5c6ae8c4658258e58bfd1fe0170 100644
+--- a/src/wld_endpoint.c
++++ b/src/wld_endpoint.c
+@@ -377,8 +377,8 @@ static void s_writeAssocStats(T_EndPoint* pEP) {
+     amxd_trans_set_uint32_t(&trans, "NrAssocAttempts", pEP->assocStats.nrAssocAttempts);
+     amxd_trans_set_uint32_t(&trans, "NrAssocAttempsSinceDc", pEP->assocStats.nrAssocAttemptsSinceDc);
+     amxd_trans_set_uint32_t(&trans, "NrAssociations", pEP->assocStats.nrAssociations);
+-    swl_typeTimeMono_toTransParam(&trans, "AssocTime", pEP->assocStats.lastAssocTime);
+-    swl_typeTimeMono_toTransParam(&trans, "DisassocTime", pEP->assocStats.lastDisassocTime);
++    amxd_trans_set_uint64_t(&trans, "AssocTime", pEP->assocStats.lastAssocTime);
++    amxd_trans_set_uint64_t(&trans, "DisassocTime", pEP->assocStats.lastDisassocTime);
+     ASSERT_TRANSACTION_LOCAL_DM_END(&trans, , ME, "%s : trans apply failure", pEP->Name);
+ }
+ 

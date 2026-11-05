@@ -1,0 +1,116 @@
+From c9efde3f6ef814008512de28b16c3e60f1b8f77e Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Tue, 19 May 2026 15:09:40 +0200
+Subject: [PATCH 18/41] wpaSupp: retrieve nbMloLinks and activeFreqsBands in EP
+ wpa connection status details
+
+New ep attribute:
+- add nbMloLinks and activeFreqsBands to endpoint connection info details struct
+- to be filled by plugin implementation (by wpa_s or other vendor specific means)
+- in default implementation:
+- 1) nbMloLinks are counter with number of link sections in mlo_status reply
+- 2) activeFreqBands are set with:
+- 2.1) connection link freq bands when EP is connected
+- 2.2) configured freq_list bands, when EP is scanning
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/94a55929d9c8ec3e110717a056abd843c3e4012e]
+---
+ include/wld/wld.h                |  2 ++
+ src/nl80211/wld_wpaSupp_ep_api.c | 48 ++++++++++++++++++++++++++++++++
+ 2 files changed, 50 insertions(+)
+
+diff --git a/include/wld/wld.h b/include/wld/wld.h
+index 4daba8b5d496fb58c097f0ed0d4e037dac6ad03d..ebe65663c6ccb6483977cc0fff9bd45e27e49a44 100644
+--- a/include/wld/wld.h
++++ b/include/wld/wld.h
+@@ -2330,6 +2330,8 @@ typedef struct {
+     swl_macBin_t localMldLinkMac;       /* local bstamld link mac (only with mlo) */
+     int32_t mldLinkId;                  /* mld link id */
+     bool isMainLink;                    /* true when connected in non-mlo mode, or when current mlo link is used for management traffic */
++    uint32_t nbMldLinks;                /** count of established mld links (only with mlo) */
++    swl_freqBand_m activeFreqBands;     /** frequency bands being scanned: only filled in Discovering/Connecting/Connected status */
+ } wld_epConnectionInfo_t;
+ 
+ 
+diff --git a/src/nl80211/wld_wpaSupp_ep_api.c b/src/nl80211/wld_wpaSupp_ep_api.c
+index 25f5d5d41d94579ff2b2f00b74071dbb2704661f..4ca2d3b5c3b17cb0e2dafa8c3793073cde1df27d 100644
+--- a/src/nl80211/wld_wpaSupp_ep_api.c
++++ b/src/nl80211/wld_wpaSupp_ep_api.c
+@@ -217,6 +217,18 @@ static swl_rc_ne s_parseAllMloStatusDetailsExt(
+         }
+         wld_wpaCtrl_getInReplyParamValInt32Def(mloLinkStatusBuf, "link_id", &pLocConnInfo->mldLinkId, -1);
+         swl_str_copy(mloReply, mloReplySize, mloLinkStatusBuf);
++
++        pLocConnInfo->activeFreqBands = SWL_BIT_SHIFT(pLocConnInfo->chSpec.band);
++        pLocConnInfo->nbMldLinks = nbLinks;
++        for(size_t i = 0; i < nbLinks; i++) {
++            if((int32_t) i == pos) {
++                continue;
++            }
++            swl_chanspec_t chspec = SWL_CHANSPEC_EMPTY;
++            if(wld_wpaSupp_fetchChanSpecFromStatusDetails(ppLinksDetails[i], &chspec) >= SWL_RC_OK) {
++                W_SWL_BIT_SET(pLocConnInfo->activeFreqBands, chspec.band);
++            }
++        }
+     }
+ 
+     s_freeMloLinkStatusDetails(nbLinks, ppLinksDetails);
+@@ -268,6 +280,27 @@ swl_rc_ne wld_wpaSupp_getMloLinkStatusByFreqBand(wld_wpaCtrlInterface_t* pInterf
+     return s_parseOrQueryAllMloStatusDetailsExt(pInterface, NULL, band, reply, replySize, NULL);
+ }
+ 
++/**
++ * @brief get scanned frequency bands, configured in wpa_supp and supported by current wiphy device
++ *
++ * @param [in] pInterface wpactrl interface used to query driver status
++ * @param [ou] pScanFreqBands output scanned frequency bands bitmask
++ *
++ * @return SWL_RC_OK in case of success, error code otherwise
++ */
++static swl_rc_ne s_getScanFreqBands(wld_wpaCtrlInterface_t* pInterface, swl_freqBand_m* pScanFreqBands) {
++    W_SWL_SETPTR(pScanFreqBands, 0);
++    ASSERTS_NOT_NULL(pInterface, SWL_RC_INVALID_PARAM, ME, "NULL");
++    ASSERTS_TRUE(wld_wpaCtrlInterface_checkConnectionPath(pInterface), SWL_RC_NOT_AVAILABLE,
++                 ME, "missing wpactlr interface");
++    char itfname[IFNAMSIZ] = {0};
++    swl_rc_ne rc = wld_wpaCtrl_getSyncCmdParamVal(pInterface, "STATUS-DRIVER", "ifname", itfname, sizeof(itfname));
++    ASSERTW_TRUE(swl_rc_isOk(rc), rc, ME, "fail to query status-driver");
++    T_EndPoint* pEP = wld_vep_from_name(itfname);
++    ASSERTW_TRUE(pEP && pEP->pRadio, SWL_RC_ERROR, ME, "No EP matching iface(%s)", itfname);
++    return wld_wpaSupp_cfgFile_readFreqBands(pEP, pScanFreqBands);
++}
++
+ /**
+  * @brief parse interface and mlo status information
+  * or query it over wpactrl interface when not provided.
+@@ -344,6 +377,20 @@ static swl_rc_ne s_parseOrQueryAllStatusDetailsExt(
+ 
+     swl_chanspec_t mainLinkChspec = SWL_CHANSPEC_EMPTY;
+     wld_wpaSupp_getConnStatusFromStatusDetails(statusBuf, &connInfo.connState);
++
++    if(connInfo.connState == EPCS_DISCOVERING) {
++        swl_freqBand_m scanFreqBands = 0;
++        if(s_getScanFreqBands(pInterface, &scanFreqBands) >= SWL_RC_OK) {
++            if(mainLink || SWL_BIT_IS_SET(scanFreqBands, linkBand)) {
++                connInfo.activeFreqBands = scanFreqBands;
++            } else {
++                SAH_TRACEZ_WARNING(ME, "fail to find band %u in scanned list 0x%x", linkBand, scanFreqBands);
++                W_SWL_FREE(statusBufTmp);
++                return SWL_RC_NOT_FOUND;
++            }
++        }
++    }
++
+     if(((connInfo.connState != EPCS_CONNECTING) && (connInfo.connState != EPCS_CONNECTED)) ||
+        (!swl_rc_isOk(wld_wpaSupp_fetchChanSpecFromStatusDetails(statusBuf, &mainLinkChspec)))) {
+         goto end;
+@@ -368,6 +415,7 @@ static swl_rc_ne s_parseOrQueryAllStatusDetailsExt(
+         W_SWL_FREE(statusBufTmp);
+         return SWL_RC_NOT_FOUND;
+     }
++    W_SWL_BIT_SET(connInfo.activeFreqBands, connInfo.chSpec.band);
+ 
+     if((wld_wpaCtrl_getInReplyParamValStr(statusBuf, "address", macStr.cMac, SWL_MAC_CHAR_LEN) >= 0) && swl_mac_charIsValidStaMac(&macStr)) {
+         swl_mac_charToBin(&connInfo.mac, &macStr);

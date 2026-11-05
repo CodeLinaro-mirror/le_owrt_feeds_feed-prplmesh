@@ -1,0 +1,42 @@
+From 379dcf4a3193760d81a0fbc0dde32f272a9fb45c Mon Sep 17 00:00:00 2001
+From: ragavan <rramasamy@maxlinear.com>
+Date: Thu, 8 Oct 2026 05:25:11 -0700
+Subject: [PATCH 41/41] genEvt: set channel change reason to DFS for
+ radar-triggered channel switches
+
+When a channel change is triggered by radar detection (DFS), the
+channel change event was incorrectly reported with reason "AUTO".
+
+This happens because hostapd continues to report ACS as the configured
+channel selection method even after a radar hit causes the AP to move
+to a different channel. As a result, pWHM classifies the channel
+change as AUTO instead of DFS.
+
+Fix this by checking whether the current chanspec is affected by radar
+at the time of the channel change. If radar is detected on the current
+channel, update the channel change reason to DFS.
+
+This ensures radar-triggered channel switches are reported with the
+correct reason.
+
+Closes: PPW-2490
+Signed-off-by: Ragavan Ramasamy <rramasamy@maxlinear.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/d98e8724c41ad2d7a19d437e70dce132201fc181]
+---
+ src/Plugin/wifiGen_eventHandlers.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/Plugin/wifiGen_eventHandlers.c b/src/Plugin/wifiGen_eventHandlers.c
+index 33b22891f3f516dcb95cc174b195743d7d951e6b..28cd1f26348491c5a3f0d1582eca768a2e595a95 100644
+--- a/src/Plugin/wifiGen_eventHandlers.c
++++ b/src/Plugin/wifiGen_eventHandlers.c
+@@ -135,6 +135,9 @@ static const char* s_fwdRadioStdWpaCtrlEventsList[] = {
+ static wld_channelChangeReason_e s_getLastAppliedChanReason(T_Radio* pRad) {
+     ASSERTS_NOT_NULL(pRad, CHAN_REASON_UNKNOWN, ME, "Null rad");
+     wld_channelChangeReason_e reason = pRad->targetChanspec.reason;
++    if(wld_channel_is_radar_detected(pRad->currentChanspec.chanspec)) {
++        return CHAN_REASON_DFS;
++    }
+     if(pRad->autoChannelSupported && pRad->autoChannelEnable) {
+         if(wld_rad_hostapd_hasCfgAcs(pRad)) {
+             reason = CHAN_REASON_AUTO;

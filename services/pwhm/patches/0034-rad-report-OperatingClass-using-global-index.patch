@@ -1,0 +1,49 @@
+From 7d108c2a47f5d7d0cc13fdaf6d26fe318c3305e7 Mon Sep 17 00:00:00 2001
+From: Ahmed Riadh SAHNOUN <ahmed-riadh.sahnoun_ext@softathome.com>
+Date: Tue, 8 Sep 2026 16:02:32 +0100
+Subject: [PATCH 34/41] rad: report OperatingClass using global index
+
+WiFi.Radio.OperatingClass was reporting region-specific operating class
+values (e.g. 12 for US) instead of global ones (e.g. 81). prplmesh
+expects global numbering per IEEE 802.11 Table E-4, causing it to branch
+to an error path when it received a regional value.
+
+References: PPW-2333 Signed-off-by: Faiez HENTATI <faiez.hentati_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/1af3d50ce7a63466f98c9d9c5564a9cf22a327e3]
+---
+ src/wld_radio.c                  | 8 +-------
+ test/testRadio11be/rad2_base.txt | 2 +-
+ 2 files changed, 2 insertions(+), 8 deletions(-)
+
+diff --git a/src/wld_radio.c b/src/wld_radio.c
+index 8cbba5f1e9a8b12714527c480a365f6b45ead37a..7b5ead6ef932b71fb80304200b9d2d7042cb56d8 100644
+--- a/src/wld_radio.c
++++ b/src/wld_radio.c
+@@ -4319,13 +4319,7 @@ void wld_rad_updateOperatingClass(T_Radio* pRad) {
+     ASSERT_NOT_NULL(pRad, , ME, "NULL");
+     ASSERTI_TRUE(pRad->hasDmReady, , ME, "%s: radio dm obj not ready for updates", pRad->Name);
+     swl_chanspec_t chanspec = wld_rad_getSwlChanspec(pRad);
+-    swl_opClassCountry_e countryZone = getCountryZone(pRad->regulatoryDomainIdx);
+-    pRad->operatingClass = swl_chanspec_getLocalOperClass(&chanspec, countryZone);
+-    if(pRad->operatingClass == 0) {
+-        pRad->operatingClass = swl_chanspec_getOperClass(&chanspec);
+-        SAH_TRACEZ_WARNING(ME, "%s: fall back to global operClass %d for chanspec %s",
+-                           pRad->Name, pRad->operatingClass, swl_typeChanspecExt_toBuf32(chanspec).buf);
+-    }
++    pRad->operatingClass = swl_chanspec_getOperClass(&chanspec);
+     ASSERT_TRUE(pRad->operatingClass != 0, , ME, "%s: could not determine operating class, skipping update", pRad->Name);
+     ASSERT_TRUE(swl_typeUInt32_commitObjectParam(pRad->pBus, "OperatingClass", pRad->operatingClass), ,
+                 ME, "%s: fail to commit operating class (%d)", pRad->Name, pRad->operatingClass);
+diff --git a/test/testRadio11be/rad2_base.txt b/test/testRadio11be/rad2_base.txt
+index a7bf54aadebbeeeb3b0111ea412f34a26af82760..ba530633c32ee59130f3d13d243e932ee100d6fc 100644
+--- a/test/testRadio11be/rad2_base.txt
++++ b/test/testRadio11be/rad2_base.txt
+@@ -14,7 +14,7 @@
+     "RxPowerSaveRepeaterEnable": false,
+     "STA_Mode": false,
+     "LastChange": 7,
+-    "OperatingClass": 4,
++    "OperatingClass": 81,
+     "RadCapabilitiesHePhysStr": "",
+     "VHTCapabilities": "AAAAAA==",
+     "TransmitPower": -1,

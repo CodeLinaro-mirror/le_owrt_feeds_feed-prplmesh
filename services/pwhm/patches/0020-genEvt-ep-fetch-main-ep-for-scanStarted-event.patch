@@ -1,0 +1,106 @@
+From 5fef2dd8db613be70a3de4a9e2d957aa413d242e Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Tue, 19 May 2026 19:16:15 +0200
+Subject: [PATCH 20/41] genEvt: ep: fetch main ep for scanStarted event
+
+Problem:
+- SCAN-STARTED event may be raised on primary wpactrl iface, but meant
+for different frequency band (case with single wpa_supp used for subset
+of freq bands
+
+Fix:
+- try to fetch main ep with active freq bands (in addition to connection
+chanspec) of wpa_s connection info
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/1efd270aeba3f8c28ab7a6f4223fecb9915b9cc4]
+---
+ src/Plugin/wifiGen_eventHandlers.c | 59 +++++++++++++++++++++++++-----
+ 1 file changed, 49 insertions(+), 10 deletions(-)
+
+diff --git a/src/Plugin/wifiGen_eventHandlers.c b/src/Plugin/wifiGen_eventHandlers.c
+index 0d765825a3bc183db1110bba5ce9255a29f7b2ed..b506bc79a4285651b9e031e433aa05fd819293ee 100644
+--- a/src/Plugin/wifiGen_eventHandlers.c
++++ b/src/Plugin/wifiGen_eventHandlers.c
+@@ -441,6 +441,50 @@ static bool s_saveHapdRadDetState(T_Radio* pRad, chanmgt_rad_state radDetState)
+     }
+     return (pRad->detailedState == radDetState);
+ }
++
++/**
++ * @brief get main endpoint by checking connection info;
++ * - EP matching the main link chanspec
++ * - or EP matching highest active frequency band
++ *
++ * @param [in] pEP endpoint whose interface receives wpactrl event
++ * @param [out] pOutConnInfo retrieved connection info
++ *
++ * @return target main endpoint when identified with wpa_supplicant status info
++ *         source endpoint when missing freq band info to identify main ep
++ *         null when freq band info are available but not matching any ep
++ */
++static T_EndPoint* s_getMainEpAndConnInfo(T_EndPoint* pEP, wld_epConnectionInfo_t* pOutConnInfo) {
++    ASSERTS_NOT_NULL(pEP, pEP, ME, NULL);
++    wld_epConnectionInfo_t connInfo;
++    memset(&connInfo, 0, sizeof(connInfo));
++    wld_wpaCtrlInterface_t* pInterface = wld_wpaSupp_ep_getWpaCtrlInterface(pEP);
++    swl_rc_ne rc = wld_wpaSupp_getMainLinkConnInfo(pInterface, &connInfo);
++    W_SWL_SETPTR(pOutConnInfo, connInfo);
++    if(!swl_rc_isOk(rc)) {
++        SAH_TRACEZ_INFO(ME, "%s: fail to query main link conn info", pEP->Name);
++        return pEP;
++    }
++    if(!connInfo.activeFreqBands) {
++        SAH_TRACEZ_INFO(ME, "%s: no active bands in conn info", pEP->Name);
++        return pEP;
++    }
++    swl_chanspec_t chSpec = SWL_CHANSPEC_EMPTY;
++    if(connInfo.chSpec.channel > 0) {
++        /** main link chanspec */
++        chSpec = connInfo.chSpec;
++    } else {
++        /** assumed main link with highest frequency band */
++        chSpec.band = swl_bit32_getHighest(connInfo.activeFreqBands);
++    }
++    T_EndPoint* pMainEP = wld_endpoint_fetchEpByChanInfo(pEP, &chSpec);
++    if(!pMainEP || !pMainEP->pRadio || !pMainEP->pSSID) {
++        SAH_TRACEZ_INFO(ME, "%s: invalid main ep", pEP->Name);
++        return NULL;
++    }
++    return pMainEP;
++}
++
+ static void s_mngrReadyCb(void* userData, char* ifName, bool isReady) {
+     SAH_TRACEZ_WARNING(ME, "%s: wpactrl mngr is %sready", ifName, (isReady ? "" : "not "));
+     T_Radio* pRad = (T_Radio*) userData;
+@@ -480,15 +524,9 @@ static void s_mngrReadyCb(void* userData, char* ifName, bool isReady) {
+     if(pEP != NULL) {
+         wld_epConnectionInfo_t connInfo;
+         memset(&connInfo, 0, sizeof(connInfo));
+-        swl_rc_ne rc = wld_wpaSupp_getMainLinkConnInfo(pEP->wpaCtrlInterface, &connInfo);
+-        if(swl_rc_isOk(rc) && (connInfo.chSpec.channel > 0)) {
+-            pEP = wld_endpoint_fetchEpByChanInfo(pEP, &connInfo.chSpec);
+-            if(!pEP || !pEP->pRadio || !pEP->pSSID) {
+-                SAH_TRACEZ_ERROR(ME, "%s: fail to fetch valid main link ep", pRad->Name);
+-                return;
+-            }
+-            pRad = pEP->pRadio;
+-        }
++        pEP = s_getMainEpAndConnInfo(pEP, &connInfo);
++        ASSERT_NOT_NULL(pEP, , ME, "%s: fail to fetch valid main link ep", pRad->Name);
++        pRad = pEP->pRadio;
+         if(connInfo.connState == EPCS_CONNECTED) {
+             CALL_INTF_EXT(pEP->wpaCtrlInterface, fStationConnectedCb, &connInfo.bssid, 0);
+         } else if((connInfo.connState == EPCS_CONNECTING) && (connInfo.chSpec.channel > 0)) {
+@@ -1466,8 +1504,9 @@ swl_rc_ne wifiGen_refreshEpConnStatus(T_EndPoint* pEP) {
+         }
+ 
+         wld_endpoint_setConnectionStatus(pEP, connState, EPE_NONE);
++        return SWL_RC_OK;
+     }
+-    return SWL_RC_OK;
++    return SWL_RC_DONE;
+ }
+ 
+ static void s_stationStartConnEvt(void* pRef, char* ifName, const char* ssid, swl_macBin_t* peerLinkMac, swl_chanspec_t* chanSpec) {

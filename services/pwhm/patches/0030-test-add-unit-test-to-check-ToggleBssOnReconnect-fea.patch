@@ -1,0 +1,294 @@
+From 066ca1abba8bb6eb919567f4f2a53fc857221540 Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Wed, 30 Sep 2026 13:06:07 +0200
+Subject: [PATCH 30/41] test: add unit test to check ToggleBssOnReconnect
+ feature
+
+New unit test:
+- add unit test to check feature EndPoint.ToggleBssOnReconnect:
+- 0- activate all vaps of radio's fronthaul
+- 1- enable ToggleBssOnReconnect feature
+- 2- set radio's endpoint as scanning => vaps shall become inactive
+- 3- set radio's endpoint as connecting => vaps shall remain inactive
+- 4- set radio's endpoint as in error state (eg wrong password)
+  => vaps shall be restored after fh restore delay
+- 5- set radio's endpoint as connecting again (fixed password)
+  => vaps shall become inactive
+- 6- set radio's endpoint as connected
+  => vaps shall be restored after fh restore delay
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/0e951ab41f59db0aaf7b3187cce238e23f15ce22]
+---
+ test/testEndpoint/Makefile       |   4 +
+ test/testEndpoint/testEndpoint.c | 249 +++++++++++++++++++++++++++++++
+ 2 files changed, 253 insertions(+)
+ create mode 100644 test/testEndpoint/Makefile
+ create mode 100644 test/testEndpoint/testEndpoint.c
+
+diff --git a/test/testEndpoint/Makefile b/test/testEndpoint/Makefile
+new file mode 100644
+index 0000000000000000000000000000000000000000..0f7257a9d3c1ffa6e3f4fa1b48e7ef81e5af6103
+--- /dev/null
++++ b/test/testEndpoint/Makefile
+@@ -0,0 +1,4 @@
++AUTO_TEST_FILE = testEndpoint
++
++include ../test_defines.mk
++include ../test_targets.mk
+diff --git a/test/testEndpoint/testEndpoint.c b/test/testEndpoint/testEndpoint.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..f9e6c386fa88dd154f8784054e06b5d2e13aa02d
+--- /dev/null
++++ b/test/testEndpoint/testEndpoint.c
+@@ -0,0 +1,249 @@
++/****************************************************************************
++**
++** SPDX-License-Identifier: BSD-2-Clause-Patent
++**
++** SPDX-FileCopyrightText: Copyright (c) 2026 SoftAtHome
++**
++** Redistribution and use in source and binary forms, with or
++** without modification, are permitted provided that the following
++** conditions are met:
++**
++** 1. Redistributions of source code must retain the above copyright
++** notice, this list of conditions and the following disclaimer.
++**
++** 2. Redistributions in binary form must reproduce the above
++** copyright notice, this list of conditions and the following
++** disclaimer in the documentation and/or other materials provided
++** with the distribution.
++**
++** Subject to the terms and conditions of this license, each
++** copyright holder and contributor hereby grants to those receiving
++** rights under this license a perpetual, worldwide, non-exclusive,
++** no-charge, royalty-free, irrevocable (except for failure to
++** satisfy the conditions of this license) patent license to make,
++** have made, use, offer to sell, sell, import, and otherwise
++** transfer this software, where such license applies only to those
++** patent claims, already acquired or hereafter acquired, licensable
++** by such copyright holder or contributor that are necessarily
++** infringed by:
++**
++** (a) their Contribution(s) (the licensed copyrights of copyright
++** holders and non-copyrightable additions of contributors, in
++** source or binary form) alone; or
++**
++** (b) combination of their Contribution(s) with the work of
++** authorship to which such Contribution(s) was added by such
++** copyright holder or contributor, if, at the time the Contribution
++** is added, such addition causes such combination to be necessarily
++** infringed. The patent license shall not apply to any other
++** combinations which include the Contribution.
++**
++** Except as expressly stated above, no rights or licenses from any
++** copyright holder or contributor is granted under this license,
++** whether expressly, by implication, estoppel or otherwise.
++**
++** DISCLAIMER
++**
++** THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
++** CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
++** INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
++** MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
++** DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR
++** CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++** SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++** LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF
++** USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
++** AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++** LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
++** ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++** POSSIBILITY OF SUCH DAMAGE.
++**
++****************************************************************************/
++
++#include <stdarg.h>    // needed for cmocka
++#include <sys/types.h> // needed for cmocka
++#include <setjmp.h>    // needed for cmocka
++#include <cmocka.h>
++
++#include "wld.h"
++#include "wld_radio.h"
++#include "wld_endpoint.h"
++#include "wld_ssid.h"
++#include "wld_util.h"
++#include "test-toolbox/ttb_mockClock.h"
++#include "test-toolbox/ttb_assert.h"
++#include "../testHelper/wld_th_mockVendor.h"
++#include "../testHelper/wld_th_radio.h"
++#include "../testHelper/wld_th_vap.h"
++#include "../testHelper/wld_th_dm.h"
++#include "swl/ttb/swl_ttb.h"
++#include "swla/ttb/swla_ttbVariant.h"
++#include <test-toolbox/ttb.h>
++
++#define ME "ep"
++
++static wld_th_dm_t dm;
++static T_EndPoint* epLink0 = NULL;
++
++static void s_doDisableVap(T_AccessPoint* pAP, T_Radio* pRad _UNUSED, wld_th_fsmStates_e state _UNUSED) {
++    assert_non_null(pAP);
++    pAP->enable = 0;
++    wld_vap_updateState(pAP);
++}
++
++static void s_doEnableVap(T_AccessPoint* pAP, T_Radio* pRad _UNUSED, wld_th_fsmStates_e state _UNUSED) {
++    assert_non_null(pAP);
++    pAP->enable = 1;
++    wld_vap_updateState(pAP);
++}
++
++static int s_radStatus(T_Radio* pRad) {
++    if(pRad) {
++        if(pRad->enable && (wld_rad_hasEnabledVap(pRad) || wld_rad_hasEnabledEp(pRad))) {
++            pRad->detailedState = CM_RAD_UP;
++            return true;
++        }
++        if(pRad->index <= 0) {
++            pRad->detailedState = CM_RAD_ERROR;
++        } else {
++            pRad->detailedState = CM_RAD_DOWN;
++        }
++    }
++    return false;
++}
++
++static swl_rc_ne s_stopFronthaul(T_Radio* pRad) {
++    assert_non_null(pRad);
++    swl_rc_ne rc = SWL_RC_INVALID_STATE;
++    T_AccessPoint* pAP = NULL;
++    wld_rad_forEachAp(pAP, pRad) {
++        if(wld_ap_hasStackEnabled(pAP)) {
++            pAP->pFA->mfn_wvap_enable(pAP, false, SET);
++            rc = SWL_RC_OK;
++        }
++    }
++    return rc;
++}
++
++static swl_rc_ne s_restoreFronthaul(T_Radio* pRad) {
++    assert_non_null(pRad);
++    swl_rc_ne rc = SWL_RC_INVALID_STATE;
++    T_AccessPoint* pAP = NULL;
++    wld_rad_forEachAp(pAP, pRad) {
++        if(!wld_ap_hasStackEnabled(pAP)) {
++            pAP->pFA->mfn_wvap_enable(pAP, true, SET);
++            rc = SWL_RC_OK;
++        }
++    }
++    return rc;
++}
++
++static int s_setupSuite(void** state _UNUSED) {
++    whm_th_fsm_useMgr(true);
++    assert_true(wld_th_dm_init(&dm));
++    ttb_object_t* obj = dm.ttbBus->rootObj;
++    swl_typeUInt32_commitObjectParam(ttb_object_getChildObject(obj, "AutoCommitMgr"), "DelayTime", 1000);
++    swl_typeCharPtr_commitObjectParam(ttb_object_getChildObject(obj, "Config"), "EnableSyncMode", "Off");
++    T_Radio* pRad = NULL;
++    wld_for_eachRad(pRad) {
++        pRad->vendor->fta.mfn_wrad_radio_status = s_radStatus;
++        pRad->vendor->fta.mfn_wrad_stopFronthaul = s_stopFronthaul;
++        pRad->vendor->fta.mfn_wrad_restoreFronthaul = s_restoreFronthaul;
++        T_AccessPoint* pAP = NULL;
++        wld_rad_forEachAp(pAP, pRad) {
++            wld_th_vap_vendorData_t* vd = wld_th_vap_getVendorData(pAP);
++            vd->fsmCallback[WLD_TH_FSM_SET_VAP_ENABLE_DOWN] = s_doDisableVap;
++            vd->fsmCallback[WLD_TH_FSM_SET_VAP_ENABLE] = s_doEnableVap;
++        }
++    }
++
++    epLink0 = wld_getEndpointByAlias("sta0");
++    assert_non_null(epLink0);
++
++    return 0;
++}
++
++static int s_teardownSuite(void** state _UNUSED) {
++    wld_th_dm_destroy(&dm);
++    return 0;
++}
++
++typedef struct {
++    T_EndPoint* pEP;
++    wld_epConnectionStatus_e connSt;
++    wld_epError_e connErr;
++    uint32_t nChecks;
++    struct {
++        uint32_t retDelayMs; /** time to wait before checking fronthaul status */
++        bool expFhSt;        /** expected fronthaul status */
++    } checks[2];
++} testBhFhEna;
++
++#define SHORT_WAIT 100
++#define LONG_WAIT 2000
++static void test_ep_toggleBssOnReconnect(void** state _UNUSED) {
++    wld_th_dm_clearFsm(&dm);
++    swl_typeBool_commitObjectParam(epLink0->pBus, "ToggleBssOnReconnect", true);
++    swl_typeUInt32_commitObjectParam(epLink0->pBus, "RestoreBssDelay", 1000);
++    ttb_mockTimer_goToFutureMs(SHORT_WAIT);
++
++    testBhFhEna tests[] = {
++        /** endpoint idle => fronthaul shall remain active */
++        {epLink0, EPCS_IDLE, EPE_NONE, 1, {{SHORT_WAIT, true, }}},
++        /** endpoint pairing => fronthaul shall be stopped */
++        {epLink0, EPCS_WPS_PAIRING, EPE_NONE, 1, {{LONG_WAIT, false, }}},
++        /** endpoint pairing timeouted => fronthaul shall be restored after restoreBssDelay */
++        {epLink0, EPCS_WPS_TIMEOUT, EPE_NONE, 2, {{SHORT_WAIT, false, }, {LONG_WAIT, true, }}},
++        /** endpoint pairing => fronthaul shall be stopped */
++        {epLink0, EPCS_WPS_PAIRING, EPE_NONE, 1, {{LONG_WAIT, false, }}},
++        /** endpoint pairing done => fronthaul shall remain stopped, as connection will follow*/
++        {epLink0, EPCS_WPS_PAIRINGDONE, EPE_NONE, 2, {{SHORT_WAIT, false, }, {LONG_WAIT, false, }}},
++        /** endpoint scanning => fronthaul shall remain stopped */
++        {epLink0, EPCS_DISCOVERING, EPE_NONE, 1, {{SHORT_WAIT, false, }}},
++        /** endpoint connecting => fronthaul shall remain stopped */
++        {epLink0, EPCS_CONNECTING, EPE_NONE, 1, {{SHORT_WAIT, false, }}},
++        /** endpoint connected => fronthaul shall be restored after restoreBssDelay */
++        {epLink0, EPCS_CONNECTED, EPE_NONE, 2, {{SHORT_WAIT, false, }, {LONG_WAIT, true, }}},
++        /** endpoint disconnected => fronthaul shall remain active */
++        {epLink0, EPCS_DISCONNECTED, EPE_NONE, 2, {{SHORT_WAIT, true, }, {LONG_WAIT, true, }}},
++        /** endpoint scanning => fronthaul shall be stopped */
++        {epLink0, EPCS_DISCOVERING, EPE_NONE, 1, {{LONG_WAIT, false, }}},
++        /** endpoint failed to find remote AP => fronthaul shall be restored after restoreBssDelay */
++        {epLink0, EPCS_ERROR, EPE_SSID_NOT_FOUND, 2, {{SHORT_WAIT, false, }, {LONG_WAIT, true, }}},
++        /** endpoint connecting again (scan evt missed) => fronthaul shall be stopped */
++        {epLink0, EPCS_CONNECTING, EPE_NONE, 1, {{LONG_WAIT, false, }}},
++        /** endpoint failed to connect => fronthaul shall be restored after restoreBssDelay */
++        {epLink0, EPCS_ERROR, EPE_INVALID_PASSPHRASE, 2, {{SHORT_WAIT, false, }, {LONG_WAIT, true, }}},
++    };
++    for(uint32_t i = 0; i < SWL_ARRAY_SIZE(tests); i++) {
++        testBhFhEna* pTest = &tests[i];
++        wld_endpoint_setConnectionStatus(pTest->pEP, pTest->connSt, pTest->connErr);
++        for(uint32_t j = 0; j < pTest->nChecks; j++) {
++            uint32_t retDelayMs = pTest->checks[j].retDelayMs;
++            bool expFhSt = pTest->checks[j].expFhSt;
++            ttb_assert_addPrint("[%u] Mismatch FH status(exp:%d) after setting EP(%s) to connSt(%i)ConnErr(%i) with delay(%u)",
++                                i, expFhSt, pTest->pEP->alias, pTest->connSt, pTest->connErr, retDelayMs);
++            if(retDelayMs > 0) {
++                ttb_mockTimer_goToFutureMs(retDelayMs);
++            }
++            ttb_assert_int_eq(wld_rad_hasActiveVap(pTest->pEP->pRadio), expFhSt);
++            ttb_assert_removeLastPrint();
++        }
++    }
++}
++
++int main(int argc _UNUSED, char* argv[] _UNUSED) {
++    sahTraceOpen("testApp", TRACE_TYPE_STDERR);
++    sahTraceSetLevel(TRACE_LEVEL_INFO);
++    sahTraceAddZone(sahTraceLevel(), "ep");
++    sahTraceAddZone(sahTraceLevel(), "epFh");
++    sahTraceAddZone(sahTraceLevel(), "ap");
++    sahTraceAddZone(sahTraceLevel(), "rad");
++    const struct CMUnitTest tests[] = {
++        cmocka_unit_test(test_ep_toggleBssOnReconnect),
++    };
++
++    int rc = cmocka_run_group_tests(tests, s_setupSuite, s_teardownSuite);
++    sahTraceClose();
++    return rc;
++}

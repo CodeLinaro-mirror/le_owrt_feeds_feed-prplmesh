@@ -1,0 +1,32 @@
+From ccf9cee4a710bbed5a1fc4310625b2b88cb905cf Mon Sep 17 00:00:00 2001
+From: Faiez HENTATI <faiez.hentati_ext@softathome.com>
+Date: Mon, 5 Oct 2026 15:49:10 +0100
+Subject: [PATCH 37/41] odl: added Device.WiFi.EndPoint object is missing
+ required parameter ProfileNumberOfEntries
+
+Problem: The Device.WiFi.EndPoint object is missing the required
+ProfileNumberOfEntries parameter. The profile count was not maintained
+for each endpoint instance.
+
+Fix: Add ProfileNumberOfEntries and update its value based on the number
+of profiles associated with each endpoint instance.
+
+References: PPW-277
+Signed-off-by: Faiez HENTATI <faiez.hentati_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/f6bf1f26c0532b6e85405b192b99e7acd86eb21c]
+---
+ odl/wld_endpoint.odl | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/odl/wld_endpoint.odl b/odl/wld_endpoint.odl
+index fda8708e769c90444c2f84a03c92f2d78f5ec2bf..cfe7f07194b3b9c3aab485f12f7d4ef61872c829 100644
+--- a/odl/wld_endpoint.odl
++++ b/odl/wld_endpoint.odl
+@@ -585,6 +585,7 @@
+ 		 *  At most one enabled entry in this table can exist with all
+ 		 *  the same values for SSID, Location and Priority.*/
+ 		%persistent object Profile[]{
++			counted with ProfileNumberOfEntries;
+ 			on action destroy call wld_endpoint_deleteProfileInstance_odf;
+ 			on event "*" call wld_ep_setProfileConf_ocf;
+ 

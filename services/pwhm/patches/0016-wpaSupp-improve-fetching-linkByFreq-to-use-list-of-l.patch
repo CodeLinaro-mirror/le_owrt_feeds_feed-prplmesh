@@ -1,0 +1,178 @@
+From d99d8b649bc6387651694cc031fcb5539691a1ec Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Tue, 19 May 2026 11:33:23 +0200
+Subject: [PATCH 16/41] wpaSupp: improve fetching linkByFreq to use list of
+ linkInfo sections
+
+Improv:
+- fetch link by freq band into splitted linkInfo sections, isof of
+doing locally a partial parsing of mlo_status and breaking early
+on freqBand match
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/41d46b8c7340255b80c9939ddcb4330096e79021]
+---
+ src/nl80211/wld_wpaSupp_ep_api.c | 131 +++++++++++++++----------------
+ 1 file changed, 63 insertions(+), 68 deletions(-)
+
+diff --git a/src/nl80211/wld_wpaSupp_ep_api.c b/src/nl80211/wld_wpaSupp_ep_api.c
+index fa46ed0a35dcb3ff7d294ad54bcb175ad804a921..cd9337de0ce40762d0dddb083f8df764466b4b7c 100644
+--- a/src/nl80211/wld_wpaSupp_ep_api.c
++++ b/src/nl80211/wld_wpaSupp_ep_api.c
+@@ -112,6 +112,35 @@ swl_rc_ne wld_wpaSupp_ep_disconnect(T_EndPoint* pEP) {
+     return SWL_RC_OK;
+ }
+ 
++/**
++ * @brief copy link info section from link details list, fetched by frequency band
++ *
++ * @param [in] nbLinks number of links
++ * @param [in] ppLinksDetails array of strings including links details
++ * @param [in] band link freqBand to look for
++ * @param [out] linkStatus target buffer filled with link details
++ * @param [in] linkStatusSize max output buf size
++ *
++ * @return link position (>= 0) in the array, when link section is found
++ *         SWL_RC_NOT_FOUND if no link section has freq param matching the band argument
++ *         negative error code otherwise
++ */
++static int32_t s_getMloLinkStatusDetailsByFreqBand(size_t nbLinks, char** ppLinksDetails, swl_freqBandExt_e band, char* linkStatus, size_t linkStatusSize) {
++    ASSERT_TRUE(linkStatus && linkStatusSize, SWL_RC_INVALID_PARAM, ME, "invalid reply buf");
++    swl_str_copy(linkStatus, linkStatusSize, "");
++    ASSERTS_TRUE(nbLinks > 0, SWL_RC_NOT_FOUND, ME, "no entries");
++    ASSERT_NOT_NULL(ppLinksDetails, SWL_RC_INVALID_PARAM, ME, "NULL");
++    for(size_t i = 0; i < nbLinks; i++) {
++        swl_chanspec_t chspec = SWL_CHANSPEC_EMPTY;
++        if((wld_wpaSupp_fetchChanSpecFromStatusDetails(ppLinksDetails[i], &chspec) >= SWL_RC_OK) &&
++           (chspec.band == band)) {
++            swl_str_copy(linkStatus, linkStatusSize, ppLinksDetails[i]);
++            return i;
++        }
++    }
++    return SWL_RC_NOT_FOUND;
++}
++
+ /**
+  * @brief parse mlo status information and fetch specific link matching given freq band
+  *
+@@ -146,18 +175,32 @@ static swl_rc_ne s_parseAllMloStatusDetailsExt(
+     swl_str_copy(mloReply, mloReplySize, "");
+     char mloLinkStatusBuf[swl_str_len(mloStatusBuf) + 1];
+     mloLinkStatusBuf[0] = 0;
+-    swl_rc_ne rc = wld_wpaSupp_fetchMloLinkStatusDetailsByFreqBand(mloStatusBuf, linkBand, mloLinkStatusBuf, sizeof(mloLinkStatusBuf));
+-    ASSERTS_TRUE(swl_rc_isOk(rc), rc, ME, "fail to fetch mlo link info");
+-    swl_macChar_t macStr = SWL_MAC_CHAR_NEW();
+-    wld_wpaSupp_fetchChanSpecFromStatusDetails(mloLinkStatusBuf, &pLocConnInfo->chSpec);
+-    if((wld_wpaCtrl_getInReplyParamValStr(mloLinkStatusBuf, "sta_link_addr", macStr.cMac, SWL_MAC_CHAR_LEN) >= 0) && swl_mac_charIsValidStaMac(&macStr)) {
+-        swl_mac_charToBin(&pLocConnInfo->localMldLinkMac, &macStr);
++
++    size_t nbLinks = 0;
++    char** ppLinksDetails = NULL;
++    swl_rc_ne rc = wld_wpaSupp_fetchMloLinkStatusDetails(mloStatusBuf, &nbLinks, &ppLinksDetails);
++    ASSERTS_TRUE(swl_rc_isOk(rc), rc, ME, "no links info");
++
++    rc = SWL_RC_NOT_FOUND;
++    int32_t pos = s_getMloLinkStatusDetailsByFreqBand(nbLinks, ppLinksDetails, linkBand, mloLinkStatusBuf, sizeof(mloLinkStatusBuf));
++    if(pos >= 0) {
++        rc = SWL_RC_OK;
++        swl_macChar_t macStr = SWL_MAC_CHAR_NEW();
++        wld_wpaSupp_fetchChanSpecFromStatusDetails(mloLinkStatusBuf, &pLocConnInfo->chSpec);
++        if((wld_wpaCtrl_getInReplyParamValStr(mloLinkStatusBuf, "sta_link_addr", macStr.cMac, SWL_MAC_CHAR_LEN) >= 0) && swl_mac_charIsValidStaMac(&macStr)) {
++            swl_mac_charToBin(&pLocConnInfo->localMldLinkMac, &macStr);
++        }
++        if((wld_wpaCtrl_getInReplyParamValStr(mloLinkStatusBuf, "ap_link_addr", macStr.cMac, SWL_MAC_CHAR_LEN) >= 0) && swl_mac_charIsValidStaMac(&macStr)) {
++            swl_mac_charToBin(&pLocConnInfo->peerMldLinkMac, &macStr);
++        }
++        wld_wpaCtrl_getInReplyParamValInt32Def(mloLinkStatusBuf, "link_id", &pLocConnInfo->mldLinkId, -1);
++        swl_str_copy(mloReply, mloReplySize, mloLinkStatusBuf);
+     }
+-    if((wld_wpaCtrl_getInReplyParamValStr(mloLinkStatusBuf, "ap_link_addr", macStr.cMac, SWL_MAC_CHAR_LEN) >= 0) && swl_mac_charIsValidStaMac(&macStr)) {
+-        swl_mac_charToBin(&pLocConnInfo->peerMldLinkMac, &macStr);
++
++    for(size_t i = 0; i < nbLinks; i++) {
++        W_SWL_FREE(ppLinksDetails[i]);
+     }
+-    wld_wpaCtrl_getInReplyParamValInt32Def(mloLinkStatusBuf, "link_id", &pLocConnInfo->mldLinkId, -1);
+-    swl_str_copy(mloReply, mloReplySize, mloLinkStatusBuf);
++    W_SWL_FREE(ppLinksDetails);
+     return rc;
+ }
+ 
+@@ -754,66 +797,18 @@ swl_rc_ne wld_wpaSupp_fetchMloLinkStatusDetailsByFreqBand(const char* mloStatusI
+     swl_str_copy(linkStatus, linkStatusSize, "");
+     ASSERTS_STR(mloStatusInfo, SWL_RC_NOT_FOUND, ME, "empty");
+ 
+-    /**
+-     * One link description per band:
+-     * link_id=0
+-     * freq=2437
+-     * ap_link_addr=5a:96:71:ee:2d:05
+-     * sta_link_addr=ac:91:9b:ff:f3:59
+-     * link_id=1
+-     * freq=5180
+-     * ap_link_addr=5a:96:71:ee:2c:06
+-     * sta_link_addr=ac:91:9b:ff:f3:5a
+-     */
+-    char section[swl_str_len(mloStatusInfo) + 1];
+-    section[0] = 0;
+-    bool fillSection = false;
+-    bool foundSection = false;
+-    swl_rc_ne rc = SWL_RC_NOT_FOUND;
++    size_t nbLinks = 0;
++    char** ppLinksDetails = NULL;
++    swl_rc_ne rc = wld_wpaSupp_fetchMloLinkStatusDetails(mloStatusInfo, &nbLinks, &ppLinksDetails);
++    ASSERTS_TRUE(swl_rc_isOk(rc), rc, ME, "no links info");
+ 
+-    char* pSep = NULL;
+-    char* pMsg = (char*) mloStatusInfo;
+-    while(pMsg[0]) {
+-        char* pNewLine = strchr(pMsg, '\n');
+-        char* pSep = pNewLine;
+-        if(pSep == NULL) {
+-            pSep = &pMsg[swl_str_len(pMsg)];
+-        }
+-        size_t nLen = pSep - pMsg;
+-        char line[nLen + 1];
+-        line[0] = 0;
+-        if(nLen > 0) {
+-            swl_str_ncopy(line, sizeof(line), pMsg, nLen);
+-        }
+-        if(swl_str_startsWith(line, "link_id")) {
+-            if(foundSection) {
+-                break;
+-            }
+-            fillSection = true;
+-            section[0] = 0;
+-        } else if(swl_str_startsWith(line, "freq")) {
+-            swl_chanspec_t chspec = SWL_CHANSPEC_EMPTY;
+-            if((wld_wpaSupp_fetchChanSpecFromStatusDetails(line, &chspec) < SWL_RC_OK) ||
+-               (chspec.band != band)) {
+-                fillSection = false;
+-                section[0] = 0;
+-            } else {
+-                foundSection = true;
+-            }
+-        }
+-        if(fillSection) {
+-            swl_strlst_cat(section, sizeof(section), "\n", line);
+-        }
+-        if(pNewLine) {
+-            pMsg = &pNewLine[1];
+-        } else {
+-            break;
+-        }
+-    }
+-    if(foundSection) {
+-        swl_str_copy(linkStatus, linkStatusSize, section);
+-        rc = SWL_RC_OK;
++    int32_t pos = s_getMloLinkStatusDetailsByFreqBand(nbLinks, ppLinksDetails, band, linkStatus, linkStatusSize);
++    rc = (pos >= 0) ? SWL_RC_OK : SWL_RC_NOT_FOUND;
++
++    for(size_t i = 0; i < nbLinks; i++) {
++        W_SWL_FREE(ppLinksDetails[i]);
+     }
++    W_SWL_FREE(ppLinksDetails);
+ 
+     return rc;
+ }

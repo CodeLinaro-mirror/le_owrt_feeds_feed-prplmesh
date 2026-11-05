@@ -1,0 +1,340 @@
+From aec1159eda958c0bb659a1890d922e84ac40566c Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Thu, 1 Oct 2026 17:10:02 +0200
+Subject: [PATCH 31/41] genFsm: move EP fronthaul control to use common logic
+ in wld library
+
+Improvements:
+- register FTA handlers for stopFronthaul and restoreFronthaul
+- remove internal management of fronthaul while connecting ep and
+rely on the native logic in wld library
+- only keep stopping fronthaul in case of scanFail EBUSY error,
+after trying first to align active hostapd chanspec with backhaul
+candidate chanspec.
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/08d9287f3f93a945b3257fa3e4f30752279b3cca]
+---
+ include_priv/Plugin/wifiGen_hapd.h |  18 +++++
+ include_priv/Plugin/wifiGen_rad.h  |  25 +++++++
+ src/Plugin/wifiGen.c               |   2 +
+ src/Plugin/wifiGen_fsm.c           | 104 ++++-------------------------
+ src/Plugin/wifiGen_hapd.c          |  12 ++++
+ src/Plugin/wifiGen_rad.c           |  26 ++++++++
+ 6 files changed, 97 insertions(+), 90 deletions(-)
+
+diff --git a/include_priv/Plugin/wifiGen_hapd.h b/include_priv/Plugin/wifiGen_hapd.h
+index 5fc9f220c92c12b4eef00145607a9994e4253702..df743c5bd41e7fbb1bc8bcb2298e954bf6c91ecd 100644
+--- a/include_priv/Plugin/wifiGen_hapd.h
++++ b/include_priv/Plugin/wifiGen_hapd.h
+@@ -95,4 +95,22 @@ void wifiGen_hapd_deauthKnownStations(T_Radio* pRad, bool noAck);
+ void wifiGen_hapd_restartDaemon(T_Radio* pRad);
+ void wifiGen_hapd_restartAllDaemons(vendor_t* pVdr);
+ 
++/**
++ * @brief check whether hostapd is down by getting the main interface status (DISABLED)
++ *
++ * @param pRad radio context
++ *
++ * @return bool true when main interface is not started or disabled
++ */
++bool wifiGen_hapd_checkDown(T_Radio* pRad);
++
++/**
++ * @brief check whether hostapd is active by getting the main interface status (not DISABLED)
++ *
++ * @param pRad radio context
++ *
++ * @return bool true when main interface is initializing or enabled, false otherwise
++ */
++bool wifiGen_hapd_checkActive(T_Radio* pRad);
++
+ #endif /* INCLUDE_PRIV_PLUGIN_WIFIGEN_HAPD_H_ */
+diff --git a/include_priv/Plugin/wifiGen_rad.h b/include_priv/Plugin/wifiGen_rad.h
+index 326cbd5ccb9bb301afd74ff356637c798a40cf73..c0a821e5849ba3ff12c1ce5f30b0a0ef6c9fad71 100644
+--- a/include_priv/Plugin/wifiGen_rad.h
++++ b/include_priv/Plugin/wifiGen_rad.h
+@@ -102,6 +102,31 @@ swl_rc_ne wifiGen_rad_bgDfsStartExt(T_Radio* pRad, wld_startBgdfsArgs_t* args);
+ swl_rc_ne wifiGen_rad_bgDfsStop(T_Radio* pRad);
+ swl_rc_ne wifiGen_rad_fsmReset(T_Radio* pRad);
+ 
++/**
++ * @brief disable fronthaul (ie vaps) on hostapd instance
++ *
++ * @param pRad radio context
++ *
++ * @return swl_rc_ne SWL_RC_OK if disable action is scheduled
++ *                   SWL_RC_DONE if hostapd is already disabled
++ *                   SWL_RC_INVALID_STATE if hostapd is stopped or disconnected
++ *                   other error codes
++ */
++swl_rc_ne wifiGen_rad_stopFronthaul(T_Radio* pRad);
++
++/**
++ * @brief restore fronthaul (ie vaps) on hostapd instance
++ * by refreshing the channel specification
++ *
++ * @param pRad radio context
++ *
++ * @return swl_rc_ne SWL_RC_OK if disable action is scheduled
++ *                   SWL_RC_DONE if hostapd is already disabled
++ *                   SWL_RC_INVALID_STATE if hostapd is stopped or disconnected
++ *                   other error codes
++ */
++swl_rc_ne wifiGen_rad_restoreFronthaul(T_Radio* pRad);
++
+ /* Internal APIs */
+ void wifiGen_rad_initBands(T_Radio* pRad);
+ swl_rc_ne wifiGen_rad_addVap(T_Radio* pRad, T_AccessPoint* pAP);
+diff --git a/src/Plugin/wifiGen.c b/src/Plugin/wifiGen.c
+index c01a864bd94d0f9e4aaad7d3833610229272dbea..029da14640004fddd02b29fa342d6cf9c45e1852 100644
+--- a/src/Plugin/wifiGen.c
++++ b/src/Plugin/wifiGen.c
+@@ -143,6 +143,8 @@ bool wifiGen_init() {
+     fta.mfn_wrad_getspectruminfo = wifiGen_rad_getSpectrumInfo;
+     fta.mfn_wrad_getCurrentTxPow_dBm = wifiGen_rad_getTxPowerdBm;
+     fta.mfn_wrad_getMaxTxPow_dBm = wifiGen_rad_getMaxTxPowerdBm;
++    fta.mfn_wrad_stopFronthaul = wifiGen_rad_stopFronthaul;
++    fta.mfn_wrad_restoreFronthaul = wifiGen_rad_restoreFronthaul;
+ 
+     /* Wrad BG DFS fta control */
+     fta.mfn_wrad_bgdfs_start_ext = wifiGen_rad_bgDfsStartExt;
+diff --git a/src/Plugin/wifiGen_fsm.c b/src/Plugin/wifiGen_fsm.c
+index 93fa2305671c18510dea6e71a53e7acfaa4a32b0..9eb901f276b2bba751fe6d835493ceeaccadb407 100644
+--- a/src/Plugin/wifiGen_fsm.c
++++ b/src/Plugin/wifiGen_fsm.c
+@@ -1145,48 +1145,6 @@ static void s_syncOnRadUp(void* userData, char* ifName, bool state) {
+     }
+ }
+ 
+-static bool s_checkHapdDown(T_Radio* pRad) {
+-    chanmgt_rad_state radDetState = CM_RAD_UNKNOWN;
+-    swl_rc_ne rc = wifiGen_hapd_getRadState(pRad, &radDetState);
+-    return ((!swl_rc_isOk(rc)) || (radDetState == CM_RAD_DOWN));
+-}
+-
+-static bool s_checkHapdActive(T_Radio* pRad) {
+-    chanmgt_rad_state radDetState = CM_RAD_UNKNOWN;
+-    swl_rc_ne rc = wifiGen_hapd_getRadState(pRad, &radDetState);
+-    return ((swl_rc_isOk(rc)) && (radDetState != CM_RAD_DOWN));
+-}
+-
+-static void s_disableFronthaul(T_Radio* pRad) {
+-    ASSERT_NOT_NULL(pRad, , ME, "NULL");
+-    if(wld_scan_isRunning(pRad)) {
+-        wld_scan_stop(pRad);
+-    }
+-    ASSERTS_TRUE(wifiGen_hapd_isAlive(pRad), , ME, "%s: hapd not running", pRad->Name);
+-    if(s_checkHapdActive(pRad)) {
+-        // disable BSSs to allow wpa_supplicant to do scan
+-        SAH_TRACEZ_INFO(ME, "%s: disable hostapd ifaces to let wpa_supplicant take the control", pRad->Name);
+-        setBitLongArray(pRad->fsmRad.FSM_BitActionArray, FSM_BW, GEN_FSM_DISABLE_HOSTAPD);
+-        wld_rad_doCommitIfUnblocked(pRad);
+-    }
+-}
+-
+-static void s_restoreFronthaul(T_Radio* pRad) {
+-    if(wifiGen_hapd_isAlive(pRad) && s_checkHapdDown(pRad)) {
+-        wld_epConnectionStatus_e connState = EPCS_DISABLED;
+-        wld_wpaSupp_ep_getConnState(wld_rad_getEnabledEndpoint(pRad), &connState);
+-        if((connState == EPCS_IDLE) || (connState == EPCS_DISABLED) ||
+-           (connState == EPCS_CONNECTED) || (connState == EPCS_DISCONNECTED) || (connState == EPCS_PASSIVE)) {
+-            SAH_TRACEZ_INFO(ME, "%s: restore fronthaul chanspec conf", pRad->Name);
+-            pRad->pFA->mfn_wrad_setChanspec(pRad, true);
+-        }
+-    }
+-}
+-
+-static void s_delayRestoreFronthaul(T_Radio* pRad) {
+-    swla_delayExec_addTimeout((swla_delayExecFun_cbf) s_restoreFronthaul, pRad, 1500);
+-}
+-
+ static void s_syncOnEpRadUp(void* userData, char* ifName, bool state _UNUSED) {
+     T_Radio* pRad = (T_Radio*) userData;
+     ASSERT_NOT_NULL(pRad, , ME, "NULL");
+@@ -1321,7 +1279,7 @@ static bool s_doRemoveHostapd(T_Radio* pRad) {
+ 
+ static bool s_doDisableHostapd(T_Radio* pRad) {
+     ASSERTS_TRUE(wifiGen_hapd_isRunning(pRad), true, ME, "%s: hostapd stopped", pRad->Name);
+-    ASSERTI_FALSE(s_checkHapdDown(pRad), true, ME, "%s: hapd iface already disabled", pRad->Name);
++    ASSERTI_FALSE(wifiGen_hapd_checkDown(pRad), true, ME, "%s: hapd iface already disabled", pRad->Name);
+     if(wld_secDmn_isGrpRestarting(pRad->hostapd)) {
+         SAH_TRACEZ_WARNING(ME, "%s: hostapd group is restarting: skip immediate disabling", pRad->Name);
+         return true;
+@@ -1768,6 +1726,7 @@ static void s_updateAllEpMld(T_EndPoint* pEP, wld_nl80211_ifaceInfo_t* epIfInfo)
+                 swl_str_copy(pNgSSID->SSID, sizeof(pNgSSID->SSID), pSSID->SSID);
+             }
+             wld_endpoint_setConnectionStatus(pNgEp, EPCS_CONNECTED, EPE_NONE);
++            s_startRefreshEpChspec(pNgEp);
+         } else if(wld_ssid_hasValidMLDRole(pNgSSID) && wld_ssid_hasValidMLDLinkID(pSSID)) {
+             // Set ConnectionStatus of all unlinked neighbor endpoints to passive mode
+             wld_endpoint_setConnectionStatus(pNgEp, EPCS_PASSIVE, EPE_NONE);
+@@ -1843,7 +1802,7 @@ static void s_syncOnEpConnected(void* userData, char* ifName, bool state) {
+                  ((swl_typeChanspec_equals(wld_chanmgt_getTgtChspec(pRad), tgtChspec)) &&
+                   (swl_str_matches(pRad->targetChanspec.reasonExt, "ep preConnect")) &&
+                   (pRad->targetChanspec.isApplied == SWL_TRL_FALSE)) ||
+-                 (!wifiGen_hapd_isAlive(pRad)) || (!s_checkHapdActive(pRad)))) {
++                 (!wifiGen_hapd_isAlive(pRad)) || (!wifiGen_hapd_checkActive(pRad)))) {
+                 wld_chanmgt_setTargetChanspec(pRad, tgtChspec, false, CHAN_REASON_EP_MOVE, "ep preConnect");
+                 if((swl_typeChanspec_equals(wld_chanmgt_getTgtChspec(pRad), tgtChspec)) &&
+                    (pRad->targetChanspec.isApplied != SWL_TRL_FALSE)) {
+@@ -1871,29 +1830,18 @@ static void s_syncOnEpConnected(void* userData, char* ifName, bool state) {
+         s_updateAllEpMld(pEP, &epIfInfo);
+         wld_bStaMld_update();
+     }
+-    s_delayRestoreFronthaul(pRad);
+     s_startRefreshEpChspec(pEP);
+-
+-    wld_mldLink_t* pLink = pSSID->pMldLink;
+-    wld_for_eachNeighMldLink_safe(pNgLink, pLink) {
+-        T_SSID* pNgSSID = wld_mld_getLinkSsid(pNgLink);
+-        if(pEP->pSSID == pNgSSID) {
+-            continue;
+-        }
+-        s_delayRestoreFronthaul(pNgSSID->RADIO_PARENT);
+-        s_startRefreshEpChspec(pNgSSID->ENDP_HOOK);
+-    }
+-}
+-
+-static void s_checkRadioRestoreFronthaul(T_Radio* pRad) {
+-    chanmgt_rad_state detRadState = CM_RAD_UNKNOWN;
+-    if((wifiGen_hapd_getRadState(pRad, &detRadState) == SWL_RC_OK) &&
+-       (detRadState != CM_RAD_UP)) {
+-        //restore tgt chanspec after disconnection
+-        s_delayRestoreFronthaul(pRad);
+-    }
+ }
+ 
++/**
++ * @brief radio event handler of endpoint disconnected
++ *
++ * @param userData private data (registered with radio context)
++ * @param ifName wpactrl interface name sourcing the event
++ * @param state connection status (here always false)
++ *
++ * @return void
++ */
+ static void s_syncOnEpDisconnected(void* userData, char* ifName, bool state) {
+     ASSERTS_FALSE(state, , ME, "still connected");
+     T_Radio* pRad = (T_Radio*) userData;
+@@ -1910,19 +1858,6 @@ static void s_syncOnEpDisconnected(void* userData, char* ifName, bool state) {
+     }
+     s_updateAllEpMld(pEP, &epIfInfo);
+     wld_bStaMld_update();
+-
+-    ASSERTS_TRUE(wifiGen_hapd_isAlive(pRad), , ME, "%s: hapd not running", pRad->Name);
+-    SAH_TRACEZ_INFO(ME, "%s: restore fronthaul chanspec conf", pEP->Name);
+-    s_checkRadioRestoreFronthaul(pRad);
+-    wld_mldLink_t* pLink = pSSID->pMldLink;
+-    wld_for_eachNeighMldLink_safe(pNgLink, pLink) {
+-        T_SSID* pNgSSID = wld_mld_getLinkSsid(pNgLink);
+-        if(pSSID == pNgSSID) {
+-            continue;
+-        }
+-        SAH_TRACEZ_INFO(ME, "%s: restore fronthaul chanspec conf", pNgSSID->Name);
+-        s_checkRadioRestoreFronthaul(pNgSSID->RADIO_PARENT);
+-    }
+ }
+ 
+ /**
+@@ -2029,16 +1964,6 @@ static void s_syncOnEpScanFail(void* userData, char* ifName, int error) {
+                             pEP->Name, swl_typeChanspecExt_toBuf32(noDfsChspec).buf);
+             wld_chanmgt_setTargetChanspec(pRad, noDfsChspec, true, CHAN_REASON_EP_MOVE, "force noDfs to allow ep scan");
+         }
+-    } else if(error == -ENOENT) {
+-        s_delayRestoreFronthaul(pRad);
+-        wld_mldLink_t* pLink = pSSID->pMldLink;
+-        wld_for_eachNeighMldLink_safe(pNgLink, pLink) {
+-            T_SSID* pNgSSID = wld_mld_getLinkSsid(pNgLink);
+-            if(pSSID == pNgSSID) {
+-                continue;
+-            }
+-            s_delayRestoreFronthaul(pNgSSID->RADIO_PARENT);
+-        }
+     }
+     /**
+      * distribute scan event to bSTAMLD auxiliary links
+@@ -2105,7 +2030,7 @@ static void s_syncOnEpStartConnFail(void* userData, char* ifName, int error) {
+         SAH_TRACEZ_WARNING(ME, "%s: disable fronthaul to allow wpa_supplicant to connect on chspec %s to %s",
+                            pEP->Name, swl_typeChanspecExt_toBuf32(chanSpec).buf,
+                            swl_typeMacBin_toBuf32Ref(bssid).buf);
+-        s_disableFronthaul(pRad);
++        pRad->pFA->mfn_wrad_stopFronthaul(pRad);
+     }
+ }
+ 
+@@ -2114,7 +2039,6 @@ static void s_syncOnWpsFail(void* userData, char* ifName) {
+     T_EndPoint* pEP = wld_rad_ep_from_name(pRad, ifName);
+     if(pEP != NULL) {
+         SAH_TRACEZ_INFO(ME, "%s: EP wps failed", pEP->Name);
+-        s_restoreFronthaul(pRad);
+     }
+ }
+ 
+@@ -2499,7 +2423,7 @@ static void s_radioChange(wld_rad_changeEvent_t* event) {
+                     SAH_TRACEZ_INFO(ME, "%s: applying country %s (wiphy %d)", pTmpRad->Name, regDom, pTmpRad->wiphy);
+ 
+                     /* phyX has active interface: bring down to set country code */
+-                    if(wifiGen_hapd_isAlive(pTmpRad) && !s_checkHapdDown(pTmpRad)) {
++                    if(wifiGen_hapd_isAlive(pTmpRad) && !wifiGen_hapd_checkDown(pTmpRad)) {
+                         wifiGen_hapd_deauthKnownStations(pTmpRad, true);
+                         if(wld_rad_hostapd_disable(pTmpRad) >= 0) {
+                             wld_rad_resetApMldLinks(pTmpRad);
+diff --git a/src/Plugin/wifiGen_hapd.c b/src/Plugin/wifiGen_hapd.c
+index f7abaff1b8074963888c82b2cb293967ff85522b..bdf91bb3b8a1975d1afcbd865d1d95c4f2051839 100644
+--- a/src/Plugin/wifiGen_hapd.c
++++ b/src/Plugin/wifiGen_hapd.c
+@@ -546,6 +546,18 @@ swl_rc_ne wifiGen_hapd_getRadState(T_Radio* pRad, chanmgt_rad_state* pDetailedSt
+     return SWL_RC_OK;
+ }
+ 
++bool wifiGen_hapd_checkActive(T_Radio* pRad) {
++    chanmgt_rad_state radDetState = CM_RAD_UNKNOWN;
++    swl_rc_ne rc = wifiGen_hapd_getRadState(pRad, &radDetState);
++    return ((swl_rc_isOk(rc)) && (radDetState != CM_RAD_DOWN));
++}
++
++bool wifiGen_hapd_checkDown(T_Radio* pRad) {
++    chanmgt_rad_state radDetState = CM_RAD_UNKNOWN;
++    swl_rc_ne rc = wifiGen_hapd_getRadState(pRad, &radDetState);
++    return ((!swl_rc_isOk(rc)) || (radDetState == CM_RAD_DOWN));
++}
++
+ static void s_updateAllTTLMConfig(T_Radio* pRad) {
+     T_AccessPoint* pAP = NULL;
+     wld_rad_forEachAp(pAP, pRad) {
+diff --git a/src/Plugin/wifiGen_rad.c b/src/Plugin/wifiGen_rad.c
+index 447686a344ef97c923f4db41fff24b298ba5e63e..e3d6893b47116b41476af9f388aa5485e1309e2b 100644
+--- a/src/Plugin/wifiGen_rad.c
++++ b/src/Plugin/wifiGen_rad.c
+@@ -1409,3 +1409,29 @@ swl_rc_ne wifiGen_rad_fsmReset(T_Radio* pRad) {
+     wld_rad_fsm_reset(pRad);
+     return SWL_RC_OK;
+ }
++
++swl_rc_ne wifiGen_rad_stopFronthaul(T_Radio* pRad) {
++    ASSERT_NOT_NULL(pRad, SWL_RC_INVALID_PARAM, ME, "NULL");
++    if(wld_scan_isRunning(pRad)) {
++        wld_scan_stop(pRad);
++    }
++    ASSERTS_TRUE(wifiGen_hapd_isAlive(pRad), SWL_RC_INVALID_STATE, ME, "%s: hapd not running", pRad->Name);
++    if(wifiGen_hapd_checkActive(pRad)) {
++        // disable BSSs to allow wpa_supplicant to do scan
++        SAH_TRACEZ_INFO(ME, "%s: disable hostapd ifaces to let wpa_supplicant take the control", pRad->Name);
++        setBitLongArray(pRad->fsmRad.FSM_BitActionArray, FSM_BW, GEN_FSM_DISABLE_HOSTAPD);
++        wld_rad_doCommitIfUnblocked(pRad);
++        return SWL_RC_OK;
++    }
++    return SWL_RC_DONE;
++}
++
++swl_rc_ne wifiGen_rad_restoreFronthaul(T_Radio* pRad) {
++    ASSERT_NOT_NULL(pRad, SWL_RC_INVALID_PARAM, ME, "NULL");
++    ASSERTS_TRUE(wifiGen_hapd_isAlive(pRad), SWL_RC_INVALID_STATE, ME, "%s: hapd not running", pRad->Name);
++    if(wifiGen_hapd_checkDown(pRad)) {
++        SAH_TRACEZ_INFO(ME, "%s: restore fronthaul chanspec conf", pRad->Name);
++        return pRad->pFA->mfn_wrad_setChanspec(pRad, true);
++    }
++    return SWL_RC_DONE;
++}

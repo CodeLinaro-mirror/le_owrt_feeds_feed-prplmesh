@@ -1,0 +1,146 @@
+From 2e9630ee5d9655b87cb44b46fcbff9faf99526e1 Mon Sep 17 00:00:00 2001
+From: Mohammed SI ALI <mohammed.siali@softathome.com>
+Date: Wed, 26 Aug 2026 14:16:36 +0200
+Subject: [PATCH 29/41] endpoint: add dm config param to pause radio fronthaul
+ while connecting
+
+- Add EndPoint.ToggleBssOnReconnect parameter with a disabled-by-default value.
+- This custom parameter has to be used, to pause radio fronthaul while
+connecting backhaul, when hw does not allow EP scanning/probing while
+VAPs are beaconing on same channel.
+- Add EndPoint.RestoreBssDelay parameter with 1500ms default value,
+to indicate how long pwhm shall wait before restoring fronthaul BSSs
+after EP connection try finished
+- it tunes time for radio to apply backhaul channel after connection, or
+considers connection retries intervals before restoring BSSs
+
+References: PPM-4222
+Signed-off-by: Mohammed SI ALI <mohammed.siali@softathome.com>
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/49d40835d4022d4dc200409980bf8cc55b9054a3]
+---
+ include/wld/wld_epFh.h |  9 +++++++++
+ odl/wld_endpoint.odl   | 21 ++++++++++++++++++++-
+ src/EpMgt/wld_epFh.c   | 32 ++++++++++++++++++++++++++++++--
+ src/wld_endpoint.c     |  6 +++++-
+ 4 files changed, 64 insertions(+), 4 deletions(-)
+
+diff --git a/include/wld/wld_epFh.h b/include/wld/wld_epFh.h
+index e5ce2764271ac7f6ba861205a053bbe7ea3f1669..bcb8b37d6e974c43c6cbbab789d9e9160bafb94d 100644
+--- a/include/wld/wld_epFh.h
++++ b/include/wld/wld_epFh.h
+@@ -91,4 +91,13 @@ void wld_epFh_init(T_EndPoint* pEP);
+  */
+ void wld_epFh_cleanup(T_EndPoint* pEP);
+ 
++/**
++ * @brief Callback function to handle changes of endpoint fronthaul mgmt config parameters
++ *
++ * @param priv Unused private data
++ * @param object The radio object being modified
++ * @param newParamValues Container with the new parameter values
++ */
++void wld_epFh_handleConfNewValues(void* priv, amxd_object_t* object, const amxc_var_t* const newParamValues);
++
+ #endif /* INCLUDE_WLD_WLD_EPFH_H_ */
+diff --git a/odl/wld_endpoint.odl b/odl/wld_endpoint.odl
+index 7243d336201221e3f64bc9b5e5c3c6a5bd440391..fda8708e769c90444c2f84a03c92f2d78f5ec2bf 100644
+--- a/odl/wld_endpoint.odl
++++ b/odl/wld_endpoint.odl
+@@ -162,6 +162,26 @@
+ 			default 15;
+ 		}
+ 
++		/**
++		 * Option to disable relative radio's fronthaul accesspoints,
++		 * while trying to connect endpoint to peer backhaul accesspoint.
++		 *
++		 * This is only relevant in extender case, and it can be used
++		 * to prevent conflict to access the scanning resource or to send
++		 * probe request to peer AP, when fronthaul APs are active (ie beaconing).
++		 */
++		%protected %persistent bool ToggleBssOnReconnect = false;
++		
++		/**
++		 * Delay in milliseconds, to wait after backhaul connection try finish,
++		 * before restoring activity on radio's fronthaul BSSs (beaconing)
++		 *
++		 * This is only relevant in extender case, and it can be used
++		 * to give time for radio to be fully stable/idle over backhaul,
++		 * before restoring activity on fronthaul (beaconing)
++		 */
++		%protected %persistent uint32 RestoreBssDelay = 1500;
++
+ 		/**
+ 		 * Enable IEEE 1905 BackhaulSTA extension.
+ 		 * @version 9.2
+@@ -870,4 +890,3 @@
+ 	} /* object EndPoint */
+     }
+ }
+-
+diff --git a/src/EpMgt/wld_epFh.c b/src/EpMgt/wld_epFh.c
+index 37dc22caab1356c0edd0c4a189665bcf85420052..21c805640c489ce1af557b29d64c34c848f80d94 100644
+--- a/src/EpMgt/wld_epFh.c
++++ b/src/EpMgt/wld_epFh.c
+@@ -248,8 +248,8 @@ static wld_event_callback_t s_epStateUpdateCbContainer = {
+ 
+ void wld_epFh_init(T_EndPoint* pEP) {
+     ASSERTS_NOT_NULL(pEP, , ME, "NULL");
+-    pEP->toggleBssOnReconnect = false;
+-    pEP->restoreBssDelay = FH_RESTORE_DELAY_MS;
++    pEP->toggleBssOnReconnect = pEP->pBus ? amxd_object_get_bool(pEP->pBus, "ToggleBssOnReconnect", NULL) : false;
++    pEP->restoreBssDelay = pEP->pBus ? amxd_object_get_uint32_t(pEP->pBus, "RestoreBssDelay", NULL) : FH_RESTORE_DELAY_MS;
+     wld_event_add_callback(gWld_queue_ep_onStatusChange, &s_epStateUpdateCbContainer);
+ }
+ 
+@@ -258,3 +258,31 @@ void wld_epFh_cleanup(T_EndPoint* pEP) {
+     wld_event_remove_callback(gWld_queue_ep_onStatusChange, &s_epStateUpdateCbContainer);
+ }
+ 
++void wld_epFh_handleConfNewValues(void* priv _UNUSED, amxd_object_t* object, const amxc_var_t* const newParamValues) {
++    T_EndPoint* pEP = wld_ep_fromObj(object);
++    ASSERT_NOT_NULL(pEP, , ME, "No EP mapped");
++
++    bool toggleBssOnReconnect = swl_typeBool_fromVariantDef(GET_ARG(newParamValues, "ToggleBssOnReconnect"), pEP->toggleBssOnReconnect);
++    uint32_t restoreBssDelay = swl_typeUInt32_fromVariantDef(GET_ARG(newParamValues, "RestoreBssDelay"), pEP->restoreBssDelay);
++
++    if(restoreBssDelay != pEP->restoreBssDelay) {
++        SAH_TRACEZ_INFO(ME, "%s: RestoreBssDelay changed to %d", pEP->alias, restoreBssDelay);
++        pEP->restoreBssDelay = restoreBssDelay;
++    }
++
++    if(toggleBssOnReconnect != pEP->toggleBssOnReconnect) {
++        SAH_TRACEZ_INFO(ME, "%s: ToggleBssOnReconnect changed to %d", pEP->alias, toggleBssOnReconnect);
++        pEP->toggleBssOnReconnect = toggleBssOnReconnect;
++        if(!toggleBssOnReconnect) {
++            s_restoreFronthaul(pEP->pRadio);
++        } else {
++            wld_ep_status_change_event_t event = {
++                .ep = pEP,
++                .oldStatus = APSTI_UNKNOWN,
++                .oldConnectionStatus = EPCS_IDLE,
++            };
++            s_epStateUpdateCb(&event);
++        }
++    }
++}
++
+diff --git a/src/wld_endpoint.c b/src/wld_endpoint.c
+index 4908e708c2385eacf30e616286e1945b97c1c101..0029b08105d14ca94af023b1db4d67c1c948546f 100644
+--- a/src/wld_endpoint.c
++++ b/src/wld_endpoint.c
+@@ -2744,8 +2744,12 @@ SWLA_DM_HDLRS(sEpDmHdlrs,
+                   ),
+               .instAddedCb = s_addEpInst_oaf, );
+ 
++SWLA_DM_GRP_HDLRS(sEpDmGrpHdlrs,
++                  ARR(SWLA_DM_PARAMGRP_HDLR(wld_epFh_handleConfNewValues, SWLA_DM_PARAMGRP("ToggleBssOnReconnect", "RestoreBssDelay")),
++                      ));
++
+ void _wld_ep_setConf_ocf(const char* const sig_name,
+                          const amxc_var_t* const data,
+                          void* const priv) {
+-    swla_dm_procObjEvtOfLocalDm(&sEpDmHdlrs, sig_name, data, priv);
++    swla_dm_procObjectEvtAndGroupOfLocalDm(&sEpDmHdlrs, &sEpDmGrpHdlrs, sig_name, data, priv);
+ }

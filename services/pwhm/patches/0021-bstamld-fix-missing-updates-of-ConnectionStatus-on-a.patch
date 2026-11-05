@@ -1,0 +1,235 @@
+From 082e11643b359f4a3439ddb3f47e592d0eaa44aa Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Wed, 20 May 2026 09:30:14 +0200
+Subject: [PATCH 21/41] bstamld: fix missing updates of ConnectionStatus on
+ auxiliary links
+
+Problem:
+- in case of bstamld, with multi-band wiphy device, backhaul scan events
+(SCAN-STARTED, SCAN-FAILED) are only reported to primary link, but
+auxiliary EPs are not updated, although they are part of scanned bands
+- auxiliary EP's freq bands used in off-channel scanning may have scan
+failure, when relative fronthaul APs are active, but they are not
+handled as no events is reported by wpa_supp
+
+Fix:
+- Distribute the "SCAN-STARTED" and "SCAN-FAILED" events to received on
+primary bstamld link, to running auxiliary links and not having their
+own wpactrl connexions.
+- mark secondary bstamld links as passive while main link is connecting
+- handle DISCONNECTED event regardless profile availability, in order
+to ensure main link status update
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/f4ff49eb05f48cadebe5f1596d54f97828d084d1]
+---
+ src/Plugin/wifiGen_eventHandlers.c |  10 +--
+ src/Plugin/wifiGen_fsm.c           | 101 ++++++++++++++++++++++++++---
+ 2 files changed, 96 insertions(+), 15 deletions(-)
+
+diff --git a/src/Plugin/wifiGen_eventHandlers.c b/src/Plugin/wifiGen_eventHandlers.c
+index b506bc79a4285651b9e031e433aa05fd819293ee..bf708e24bf3bd4885308005cdb8b7a7af866d33c 100644
+--- a/src/Plugin/wifiGen_eventHandlers.c
++++ b/src/Plugin/wifiGen_eventHandlers.c
+@@ -1537,12 +1537,12 @@ static void s_stationDisconnectedEvt(void* pRef, char* ifName, swl_macBin_t* bBs
+ 
+     SAH_TRACEZ_INFO(ME, "%s: station disconnected from %s reason %d", pEP->Name, swl_typeMacBin_toBuf32Ref(bBssidMac).buf, reason);
+ 
+-    if((pEP->currentProfile != NULL) &&
+-       ((pEP->connectionStatus == EPCS_CONNECTING) ||
+-        (pEP->connectionStatus == EPCS_CONNECTED))) {
+-        wld_epError_e epErr = s_getEpErrFromDeauthReason(reason) ? : pEP->error;
+-        wld_endpoint_setConnectionStatus(pEP, wld_endpoint_connStatusFromEpError(epErr), epErr);
++    wld_epError_e epErr = s_getEpErrFromDeauthReason(reason) ? : pEP->error;
++    wld_epConnectionStatus_e epConnSt = wld_endpoint_connStatusFromEpError(epErr);
++    if(pEP->connectionStatus == EPCS_CONNECTED) {
++        epConnSt = EPCS_DISCONNECTED;
+     }
++    wld_endpoint_setConnectionStatus(pEP, epConnSt, epErr);
+ 
+     CALL_MGR_I_EXT(pEP->wpaCtrlInterface, fSyncOnEpDisconnected, false);
+ }
+diff --git a/src/Plugin/wifiGen_fsm.c b/src/Plugin/wifiGen_fsm.c
+index 3c2e7e6e09e259d69e013e6f2a075d52e2bfff5d..8aca47260658100c37c39f3696cf9b0e552879ae 100644
+--- a/src/Plugin/wifiGen_fsm.c
++++ b/src/Plugin/wifiGen_fsm.c
+@@ -1578,8 +1578,11 @@ static bool s_doStopWpaSupp(T_EndPoint* pEP, T_Radio* pRad _UNUSED) {
+     ASSERTS_TRUE(wifiGen_wpaSupp_isRunning(pEP), true, ME, "%s: wpa_supplicant stopped", pEP->Name);
+     SAH_TRACEZ_INFO(ME, "%s: stop wpa_supplicant", pEP->Name);
+     wifiGen_wpaSupp_stopDaemon(pEP);
+-    // disable wpactrl interface of auxiliary link (as only the primary link iface will be used)
+-    if(pEP->pSSID && (pEP->pSSID->mldRole == SWL_MLO_ROLE_AUXILIARY)) {
++    /**
++     * disable wpactrl interface of auxiliary links of multi-band wiphy device
++     * (as only the primary link iface will be used)
++     */
++    if(pEP->pSSID && (pEP->pSSID->mldRole == SWL_MLO_ROLE_AUXILIARY) && (wld_rad_countWiphyRads(pRad->wiphy) > 1)) {
+         wld_wpaCtrlInterface_setEnable(pEP->wpaCtrlInterface, false);
+     }
+     return true;
+@@ -1899,9 +1902,9 @@ static void s_syncOnEpDisconnected(void* userData, char* ifName, bool state) {
+     ASSERT_NOT_NULL(pSSID, , ME, "NULL");
+     SAH_TRACEZ_INFO(ME, "%s: disconnected endpoint", pEP->Name);
+ 
+-    wld_nl80211_ifaceInfo_t epIfInfo;
++    wld_nl80211_ifaceInfo_t epIfInfo = {0};
+     swl_rc_ne rc = wld_ep_nl80211_getInterfaceInfo(pEP, &epIfInfo);
+-    if(swl_rc_isOk(rc)) {
++    if(!swl_rc_isOk(rc)) {
+         SAH_TRACEZ_WARNING(ME, "%s: fail to get iface info", pEP->Name);
+     }
+     s_updateAllEpMld(pEP, &epIfInfo);
+@@ -1921,12 +1924,40 @@ static void s_syncOnEpDisconnected(void* userData, char* ifName, bool state) {
+     }
+ }
+ 
++/**
++ * @brief radio event handler of endpoint starting to connect (sending AUTH_REQ)
++ *
++ * @param [in] userData private data (registered with radio context)
++ * @param [in] ifName wpactrl interface name sourcing the event
++ * @param [in] ssid the remote SSID to which endpoint is connection
++ * @param [in] chanSpec the channel used to send the authentication request
++ *
++ * @return void
++ */
+ static void s_syncOnEpStartConn(void* userData, char* ifName, const char* ssid, swl_macBin_t* bssid, swl_chanspec_t* chanSpec) {
+     T_Radio* pRad = (T_Radio*) userData;
+     T_EndPoint* pEP = wld_endpoint_fetchEpByChanInfo(wld_rad_ep_from_name(pRad, ifName), chanSpec);
+     ASSERT_NOT_NULL(pEP, , ME, "NULL");
+     SAH_TRACEZ_INFO(ME, "%s: endpoint is connecting to (%s) %s over chspec(%s)",
+                     pEP->Name, ssid, swl_typeMacBin_toBuf32Ref(bssid).buf, swl_typeChanspecExt_toBuf32Ref(chanSpec).buf);
++
++    T_SSID* pSSID = pEP->pSSID;
++    if(wld_ssid_hasValidMLDRole(pSSID)) {
++        wld_for_eachNeighMldLink_safe(pNgLink, pSSID->pMldLink) {
++            T_SSID* pNgSSID = wld_mld_getLinkSsid(pNgLink);
++            if(!pNgSSID || !pNgSSID->ENDP_HOOK || (pNgSSID == pSSID) ||
++               !wld_ssid_hasValidMLDRole(pNgSSID)) {
++                continue;
++            }
++            T_EndPoint* pNgEp = pNgSSID->ENDP_HOOK;
++            if(pNgEp->connectionStatus == EPCS_DISCOVERING) {
++                // Set ConnectionStatus of all unlinked neighbor endpoints to idle
++                SAH_TRACEZ_INFO(ME, "neighbor endpoint %s is set to passive until full %s connection",
++                                pNgEp->Name, pEP->Name);
++                wld_endpoint_setConnectionStatus(pNgEp, EPCS_PASSIVE, EPE_NONE);
++            }
++        }
++    }
+     ASSERTS_TRUE(wifiGen_hapd_isAlive(pRad), , ME, "%s: hapd not running", pRad->Name);
+ 
+     swl_chanspec_t currChanSpec = SWL_CHANSPEC_EMPTY;
+@@ -1940,6 +1971,42 @@ static void s_syncOnEpStartConn(void* userData, char* ifName, const char* ssid,
+     }
+ }
+ 
++/**
++ * @brief radio event handler of endpoint starting to scan
++ *
++ * @param [in] userData private data (registered with radio context)
++ * @param [in] ifName wpactrl interface name sourcing the event
++ *
++ * @return void
++ */
++static void s_syncOnEpScanStarted(void* userData, char* ifName) {
++    T_Radio* pRad = (T_Radio*) userData;
++    T_EndPoint* pEP = wld_rad_ep_from_name(pRad, ifName);
++    ASSERT_NOT_NULL(pEP, , ME, "NULL");
++    SAH_TRACEZ_INFO(ME, "%s: EP start scan (conSt:%d)", pEP->Name, pEP->connectionStatus);
++    if((pEP->connectionStatus != EPCS_DISCOVERING) &&
++       (pEP->connectionStatus != EPCS_WPS_PAIRING)) {
++        return;
++    }
++
++    T_SSID* pSSID = pEP->pSSID;
++    ASSERT_NOT_NULL(pSSID, , ME, "%s: No mapped ssid", pEP->Name);
++    /**
++     * distribute scan event to bSTAMLD auxiliary links
++     * (as the event is only sent to the primary link socket)
++     */
++    if(pSSID->mldRole == SWL_MLO_ROLE_PRIMARY) {
++        wld_for_eachNeighMldLink_safe(pNgLink, pSSID->pMldLink) {
++            T_SSID* pNgSSID = wld_mld_getLinkSsid(pNgLink);
++            if(pNgSSID && (pNgSSID->mldRole == SWL_MLO_ROLE_AUXILIARY) &&
++               pNgSSID->ENDP_HOOK &&
++               !wld_wpaCtrlInterface_isReady(pNgSSID->ENDP_HOOK->wpaCtrlInterface)) {
++                NOTIFY_NA_EXT(pNgSSID->ENDP_HOOK->wpaCtrlInterface, fStationScanStartedCb);
++            }
++        }
++    }
++}
++
+ static void s_syncOnEpScanFail(void* userData, char* ifName, int error) {
+     T_Radio* pRad = (T_Radio*) userData;
+     T_EndPoint* pEP = wld_rad_ep_from_name(pRad, ifName);
+@@ -1951,11 +2018,11 @@ static void s_syncOnEpScanFail(void* userData, char* ifName, int error) {
+         if(wld_scan_isRunning(pRad)) {
+             wld_scan_stop(pRad);
+         }
+-        ASSERTS_TRUE(wifiGen_hapd_isAlive(pRad), , ME, "%s: hapd not running", pRad->Name);
+         chanmgt_rad_state detRadState = CM_RAD_UNKNOWN;
+-        wifiGen_hapd_getRadState(pRad, &detRadState);
+-        if((detRadState == CM_RAD_FG_CAC) ||
+-           ((detRadState == CM_RAD_UP) && swl_chanspec_isDfs(wld_chanmgt_getCurChspec(pRad)))) {
++        if(wifiGen_hapd_isAlive(pRad) &&
++           (wifiGen_hapd_getRadState(pRad, &detRadState) >= SWL_RC_OK) &&
++           ((detRadState == CM_RAD_FG_CAC) ||
++            ((detRadState == CM_RAD_UP) && swl_chanspec_isDfs(wld_chanmgt_getCurChspec(pRad))))) {
+             swl_chanspec_t noDfsChspec = wld_chanmgt_getDefaultSupportedChanspec(pRad);
+             SAH_TRACEZ_INFO(ME, "%s: switch to noDFS %s to allow wpa_supplicant to start scan",
+                             pEP->Name, swl_typeChanspecExt_toBuf32(noDfsChspec).buf);
+@@ -1972,6 +2039,20 @@ static void s_syncOnEpScanFail(void* userData, char* ifName, int error) {
+             s_delayRestoreFronthaul(pNgSSID->RADIO_PARENT);
+         }
+     }
++    /**
++     * distribute scan event to bSTAMLD auxiliary links
++     * (as it is only received primary link socket)
++     */
++    if(pSSID->mldRole == SWL_MLO_ROLE_PRIMARY) {
++        wld_for_eachNeighMldLink_safe(pNgLink, pSSID->pMldLink) {
++            T_SSID* pNgSSID = wld_mld_getLinkSsid(pNgLink);
++            if(pNgSSID && (pNgSSID->mldRole == SWL_MLO_ROLE_AUXILIARY) &&
++               pNgSSID->ENDP_HOOK &&
++               !wld_wpaCtrlInterface_isReady(pNgSSID->ENDP_HOOK->wpaCtrlInterface)) {
++                NOTIFY_EXT(pNgSSID->ENDP_HOOK->wpaCtrlInterface, fStationScanFailedCb, error);
++            }
++        }
++    }
+ }
+ 
+ static void s_syncOnEpStartConnFail(void* userData, char* ifName, int error) {
+@@ -2032,7 +2113,6 @@ static void s_syncOnWpsFail(void* userData, char* ifName) {
+     T_EndPoint* pEP = wld_rad_ep_from_name(pRad, ifName);
+     if(pEP != NULL) {
+         SAH_TRACEZ_INFO(ME, "%s: EP wps failed", pEP->Name);
+-        ASSERTS_TRUE(wifiGen_hapd_isAlive(pRad), , ME, "%s: hapd not running", pRad->Name);
+         s_restoreFronthaul(pRad);
+     }
+ }
+@@ -2046,6 +2126,7 @@ static void s_registerWpaSuppRadEvtHandlers(wld_secDmn_t* wpaSupp) {
+         handlers.fSyncOnRadioUp = s_syncOnEpRadUp;
+         handlers.fSyncOnEpDisconnected = s_syncOnEpDisconnected;
+         handlers.fStationStartConnCb = s_syncOnEpStartConn;
++        handlers.fStationScanStartedCb = s_syncOnEpScanStarted;
+         handlers.fStationScanFailedCb = s_syncOnEpScanFail;
+         handlers.fStationStartConnFailedCb = s_syncOnEpStartConnFail;
+         handlers.fWpsCancelMsg = s_syncOnWpsFail;
+@@ -2059,6 +2140,7 @@ static void s_registerWpaSuppRadEvtHandlers(wld_secDmn_t* wpaSupp) {
+ static bool s_doStartWpaSupp(T_EndPoint* pEP, T_Radio* pRad _UNUSED) {
+     bool enaConds = (wld_endpoint_hasStackEnabled(pEP) && (pEP->index > 0));
+     ASSERTS_TRUE(enaConds, true, ME, "%d: ep not ready", pEP->Name);
++    s_registerWpaSuppRadEvtHandlers(pEP->wpaSupp);
+     if(wld_secDmn_isEnabled(pRad->hostapd)) {
+         chanmgt_rad_state fhDetSta = CM_RAD_UNKNOWN;
+         wifiGen_hapd_getRadState(pRad, &fhDetSta);
+@@ -2081,7 +2163,6 @@ static bool s_doStartWpaSupp(T_EndPoint* pEP, T_Radio* pRad _UNUSED) {
+ 
+     SAH_TRACEZ_INFO(ME, "%s: start wpa_supplicant", pEP->Name);
+     wifiGen_wpaSupp_startDaemon(pEP);
+-    s_registerWpaSuppRadEvtHandlers(pEP->wpaSupp);
+     return true;
+ }
+ 

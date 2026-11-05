@@ -1,0 +1,84 @@
+From e55d937a4705a8492c31f8e9ad49b09bcbc13dfd Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Thu, 21 May 2026 16:50:12 +0200
+Subject: [PATCH 22/41] bstamld: fix conflict reconfiguring bstamld wpa_s with
+ starting hostapd
+
+Problem:
+- running bstamld wpa_s may prevent proper starting of fronthaul,
+when channel is locked or scan is in progress by wpa_s
+
+Fix:
+- when bstamld wpa_supplicant is running,while hostapd is being started:
+- 1) wpa_s not yet connected (idle or scanning) => stop it to ensure
+prio for hostapd; wpa_s is startup resumed when fronthaul is fully ready
+- 2) wpa_s connected :
+- 2.1) if hostapd will be started or APMLD is reconfigured:
+       => restart wpa_supp to follow with scan after fronthaul is ready
+- 2.2) otherwise, just resfresh wpa_s config and update connection
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/7fc60e42b7917d470d0d45d6df9774a279223cbe]
+---
+ src/Plugin/wifiGen_fsm.c | 31 ++++++++++++++++++++-----------
+ 1 file changed, 20 insertions(+), 11 deletions(-)
+
+diff --git a/src/Plugin/wifiGen_fsm.c b/src/Plugin/wifiGen_fsm.c
+index 8aca47260658100c37c39f3696cf9b0e552879ae..3dd068824e83284d16591cecc232e04cae58ce52 100644
+--- a/src/Plugin/wifiGen_fsm.c
++++ b/src/Plugin/wifiGen_fsm.c
+@@ -2270,12 +2270,6 @@ void s_checkEpDependency(T_EndPoint* pEP, T_Radio* pRad _UNUSED) {
+     if(isBitSetLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_ENABLE_EP)) {
+         setBitLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_START_WPASUPP);
+     }
+-    if(isBitSetLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_START_WPASUPP)) {
+-        clearBitLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_UPDATE_WPASUPP);
+-        clearBitLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_CONNECT_EP);
+-        setBitLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_STOP_WPASUPP);
+-        setBitLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_MOD_WPASUPP);
+-    }
+     T_SSID* pSSID = pEP->pSSID;
+     ASSERT_NOT_NULL(pSSID, , ME, "%s: no ssid ctx", pEP->alias);
+     if(isBitSetLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_START_WPASUPP) ||
+@@ -2295,13 +2289,22 @@ void s_checkEpDependency(T_EndPoint* pEP, T_Radio* pRad _UNUSED) {
+             // Stop wpa_supp if not the primary link
+             setBitLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_STOP_WPASUPP);
+         } else {
+-            if(wifiGen_wpaSupp_isRunning(pEP)) {
+-                // Reload wpa_supp and update status
++            if(!wifiGen_wpaSupp_isRunning(pEP)) {
++                /** Start wpa_supp if SSID is the primary link or if there is no primary at all */
++                setBitLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_START_WPASUPP);
++            } else if(wifiGen_hapd_isStartable(pRad) &&
++                      (isBitSetLongArray(pRad->fsmRad.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_START_HOSTAPD) ||
++                       isBitSetLongArray(pRad->fsmRad.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_MOD_MLD))) {
++                /**
++                 * bstamld is reconfigured (changes of number or frequencies of the links)
++                 * while fronthaul is being started at same time:
++                 * restart wpa_supp to avoid scan conflict (hostapd has more prio)
++                 */
++                setBitLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_START_WPASUPP);
++            } else {
++                /** Reload wpa_supp and update status */
+                 setBitLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_UPDATE_WPASUPP);
+                 setBitLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_CONNECT_EP);
+-            } else {
+-                // Start wpa_supp if SSID is the primary link or if there is no primary at all
+-                setBitLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_START_WPASUPP);
+             }
+         }
+         wld_mld_saveLinkConfigured(pSSID->pMldLink, wld_mld_isLinkUsable(pSSID->pMldLink));
+@@ -2312,6 +2315,12 @@ void s_checkEpDependency(T_EndPoint* pEP, T_Radio* pRad _UNUSED) {
+         }
+         wld_ssid_setMLDStatus(pEP->pSSID, wld_mld_checkMLDStatus(pEP->pSSID));
+     }
++    if(isBitSetLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_START_WPASUPP)) {
++        clearBitLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_UPDATE_WPASUPP);
++        clearBitLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_CONNECT_EP);
++        setBitLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_STOP_WPASUPP);
++        setBitLongArray(pEP->fsm.FSM_AC_BitActionArray, FSM_BW, GEN_FSM_MOD_WPASUPP);
++    }
+ }
+ 
+ static void s_checkRadDependency(T_Radio* pRad) {

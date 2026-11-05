@@ -1,0 +1,196 @@
+From 7b0eea6635a7745f9f0777eeff3c24aea0d48302 Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Mon, 18 May 2026 09:08:37 +0200
+Subject: [PATCH 08/41] wpaSuppCfg: add apis to build and read freq_list per EP
+
+New apis:
+- add api to build scan FreqList of EP based on its radio freqList, and its
+membership to bstamld
+- add api to read scan FreqList of EP, from saved conf, or deduced on
+wiphy device supported frequencies
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/ef44b1d695104641d27b15ef58e14be69f40a218]
+---
+ include/wld/wld_wpaSupp_cfgFile.h |  33 ++++++++++
+ src/nl80211/wld_wpaSupp_cfgFile.c | 106 ++++++++++++++++++++++++++----
+ 2 files changed, 128 insertions(+), 11 deletions(-)
+
+diff --git a/include/wld/wld_wpaSupp_cfgFile.h b/include/wld/wld_wpaSupp_cfgFile.h
+index d6cff0a022302c72e2e69c48ee8ebdcefaebdd95..070669ac703b82c7cbfdcd7c7facddfff10697dd 100644
+--- a/include/wld/wld_wpaSupp_cfgFile.h
++++ b/include/wld/wld_wpaSupp_cfgFile.h
+@@ -70,4 +70,37 @@ swl_rc_ne wld_wpaSupp_cfgFile_createExt(T_EndPoint* pEP);
+ swl_rc_ne wld_wpaSupp_cfgFile_globalConfigUpdate(char* configPath, const char* key, const char* value);
+ swl_rc_ne wld_wpaSupp_cfgFile_networkConfigUpdate(char* configPath, const char* key, const char* value);
+ 
++/**
++ * @brief build frequencies list to be scanned by wpa_supplicant
++ *
++ * @param [in,out] freqListStr output buffer, filled with space separated string list
++ * @param [in] freqListStrBufSize output buffer size
++ * @param [in] sep separator character
++ *
++ * @return SWL_RC_OK if successful, error code otherwise
++ */
++swl_rc_ne wld_wpaSupp_cfgFile_buildFreqList(T_EndPoint* pEP, char* freqListStr, size_t freqListStrBufSize);
++
++/**
++ * @brief read saved frequencies list , in param "freq_list" scanned by wpa_supplicant
++ * or assume, when param is empty, all frequencies handled by the wiphy device
++ *
++ * @param [in,out] freqListStr output buffer, filled with space separated string list
++ * @param [in] freqListStrBufSize output buffer size
++ *
++ * @return SWL_RC_OK if successful, error code otherwise
++ */
++swl_rc_ne wld_wpaSupp_cfgFile_readFreqList(T_EndPoint* pEP, char* freqListStr, size_t freqListStrBufSize);
++
++/**
++ * @brief read saved scan frequencies bands, from frequencies list,
++ * in wpa_supplicant param "freq_list"
++ * or assume, when param is empty, all frequencies handled by the wiphy device
++ *
++ * @param [in,out] pFreqBands output bitmap of scan frequency bands
++ *
++ * @return SWL_RC_OK if successful, error code otherwise
++ */
++swl_rc_ne wld_wpaSupp_cfgFile_readFreqBands(T_EndPoint* pEP, swl_freqBand_m* pFreqBands);
++
+ #endif /* __WLD_WPA_SUPPLICANT_CFG_FILE_H__ */
+diff --git a/src/nl80211/wld_wpaSupp_cfgFile.c b/src/nl80211/wld_wpaSupp_cfgFile.c
+index b200181ed73e91ec75ad499f86b523d7b85cb472..94d4393192dacddc05ac40022cfdda161a407deb 100644
+--- a/src/nl80211/wld_wpaSupp_cfgFile.c
++++ b/src/nl80211/wld_wpaSupp_cfgFile.c
+@@ -78,20 +78,28 @@ static const char* wld_wpsConfigMethods[] = { "usba", "ethernet", "label", "disp
+     "physical_push_button", "PIN",
+     0};
+ 
+-static void s_addMLOFreqCandidates(T_EndPoint* pEP, char* freqListStr, size_t freqListStrBufSize, const char* sep) {
+-    ASSERTS_NOT_NULL(pEP, , ME, "NULL");
+-    ASSERTS_NOT_NULL(freqListStr, , ME, "NULL");
+-    ASSERTS_NOT_EQUALS(freqListStrBufSize, 0, , ME, "Invalid length");
+-
++/**
++ * @brief build frequencies list to be scanned by wpa_supplicant
++ *
++ * @param [in,out] freqListStr output buffer to be filled
++ * @param [in] freqListStrBufSize output buffer size
++ * @param [in] sep separator character
++ *
++ * @return SWL_RC_OK if successful, error code otherwise
++ */
++static swl_rc_ne s_buildFreqList(T_EndPoint* pEP, char* freqListStr, size_t freqListStrBufSize, const char* sep) {
++    ASSERTS_NOT_NULL(pEP, SWL_RC_INVALID_PARAM, ME, "NULL");
++    ASSERTS_TRUE(freqListStr && freqListStrBufSize, SWL_RC_INVALID_PARAM, ME, "null target buffer");
+     T_Radio* pRad = pEP->pRadio;
+-    ASSERTS_NOT_NULL(pRad, , ME, "NULL");
++    ASSERT_NOT_NULL(pRad, SWL_RC_INVALID_STATE, ME, "%s: No mapped radio", pEP->alias);
++    T_SSID* pSSID = pEP->pSSID;
++    ASSERT_NOT_NULL(pSSID, SWL_RC_INVALID_STATE, ME, "%s: No mapped ssid", pEP->alias);
++
+     bool onlyPscChannels = pRad->scanState.cfg.onlyScanPscChannels;
+     wld_rad_printPossibleFreqsWithSep(pRad, freqListStr, freqListStrBufSize, sep, onlyPscChannels, false);
+ 
+-    T_SSID* pSSID = pEP->pSSID;
+-    ASSERTS_NOT_NULL(pSSID, , ME, "NULL");
+-    ASSERTS_TRUE(wld_mld_isLinkUsable(pSSID->pMldLink), , ME, "Invalid link");
+-
++    /** append frequencies of neighbor link's radios */
++    ASSERTI_TRUE(wld_mld_isLinkUsable(pSSID->pMldLink), SWL_RC_OK, ME, "%s: no usable link", pEP->alias);
+     wld_mldLink_t* pLink = pSSID->pMldLink;
+     wld_for_eachNeighMldLink_safe(pNgLink, pLink) {
+         if(pLink == pNgLink) {
+@@ -105,6 +113,82 @@ static void s_addMLOFreqCandidates(T_EndPoint* pEP, char* freqListStr, size_t fr
+         onlyPscChannels = pNgRad->scanState.cfg.onlyScanPscChannels;
+         wld_rad_printPossibleFreqsWithSep(pNgRad, freqListStr, freqListStrBufSize, sep, onlyPscChannels, false);
+     }
++    return SWL_RC_OK;
++}
++
++swl_rc_ne wld_wpaSupp_cfgFile_buildFreqList(T_EndPoint* pEP, char* freqListStr, size_t freqListStrBufSize) {
++    return s_buildFreqList(pEP, freqListStr, freqListStrBufSize, " ");
++}
++
++/**
++ * @brief read saved frequencies list , in param "freq_list" scanned by wpa_supplicant
++ * or assume, when param is empty, all frequencies handled by the wiphy device
++ *
++ * @param [in,out] freqListStr output buffer to be filled
++ * @param [in] freqListStrBufSize output buffer size
++ * @param [in] sep separator character
++ *
++ * @return SWL_RC_OK if successful, error code otherwise
++ */
++static swl_rc_ne s_readFreqList(T_EndPoint* pEP, char* freqListStr, size_t freqListStrBufSize, const char* sep) {
++    ASSERTS_NOT_NULL(pEP, SWL_RC_INVALID_PARAM, ME, "NULL");
++    ASSERTS_TRUE(freqListStr && freqListStrBufSize, SWL_RC_INVALID_PARAM, ME, "null target buffer");
++    ASSERT_NOT_NULL(pEP->pRadio, SWL_RC_INVALID_STATE, ME, "%s: No mapped radio", pEP->alias);
++
++    /** try first to load saved freqlist */
++    wld_wpaSupp_config_t* conf = NULL;
++    if(pEP->wpaSupp && wld_wpaSupp_loadConfig(&conf, pEP->wpaSupp->cfgFile)) {
++        bool hasSavedFreqList = false;
++        char* savedFreqList = swl_mapChar_get(wld_wpaSupp_getGlobalConfig(conf), "freq_list");
++        if(!swl_str_isEmpty(savedFreqList)) {
++            swl_str_copy(freqListStr, freqListStrBufSize, savedFreqList);
++            hasSavedFreqList = true;
++        }
++        wld_wpaSupp_deleteConfig(conf);
++        if(hasSavedFreqList) {
++            return SWL_RC_OK;
++        }
++    }
++
++    /** otherwise assume all frequencies handled by the wiphy device */
++    bool onlyPscChannels = pEP->pRadio->scanState.cfg.onlyScanPscChannels;
++    wld_rad_printPossibleFreqsWithSep(pEP->pRadio, freqListStr, freqListStrBufSize, sep, onlyPscChannels, true);
++    T_Radio* pRad;
++    wld_for_eachRad(pRad) {
++        if(pRad == pEP->pRadio) {
++            continue;
++        }
++        if(swl_str_isEmpty(pRad->wiphyName) || !swl_str_matches(pRad->wiphyName, pEP->pRadio->wiphyName)) {
++            continue;
++        }
++        onlyPscChannels = pRad->scanState.cfg.onlyScanPscChannels;
++        wld_rad_printPossibleFreqsWithSep(pRad, freqListStr, freqListStrBufSize, sep, onlyPscChannels, false);
++    }
++    return SWL_RC_OK;
++}
++
++swl_rc_ne wld_wpaSupp_cfgFile_readFreqList(T_EndPoint* pEP, char* freqListStr, size_t freqListStrBufSize) {
++    return s_readFreqList(pEP, freqListStr, freqListStrBufSize, " ");
++}
++
++swl_rc_ne wld_wpaSupp_cfgFile_readFreqBands(T_EndPoint* pEP, swl_freqBand_m* pFreqBands) {
++    W_SWL_SETPTR(pFreqBands, 0);
++    swl_freqBand_m freqBands = 0;
++    char freqListStr[WLD_L_BUF] = {0};
++    swl_rc_ne rc = s_readFreqList(pEP, freqListStr, sizeof(freqListStr), " ");
++    ASSERTS_TRUE(swl_rc_isOk(rc), rc, ME, "fail to get freqList");
++
++    uint32_t nrFreqs = (swl_str_len(freqListStr) > 0) + swl_str_countChar(freqListStr, ' ');
++    uint32_t freqs[nrFreqs + 1];
++    nrFreqs = swl_typeUInt32_arrayFromCharSep(freqs, SWL_ARRAY_SIZE(freqs), freqListStr, " ");
++    for(uint32_t i = 0; i < nrFreqs; i++) {
++        swl_chanspec_t chSpec = SWL_CHANSPEC_EMPTY;
++        if((swl_chanspec_fromMHz(&chSpec, freqs[i]) >= SWL_RC_OK) && (chSpec.band < SWL_FREQ_BAND_EXT_NONE)) {
++            W_SWL_BIT_SET(freqBands, chSpec.band);
++        }
++    }
++    W_SWL_SETPTR(pFreqBands, freqBands);
++    return SWL_RC_OK;
+ }
+ 
+ /**
+@@ -157,7 +241,7 @@ static swl_rc_ne s_setWpaSuppGlobalConfig(T_EndPoint* pEP, wld_wpaSupp_config_t*
+     }
+ 
+     char freqListStr[1024] = {'\0'};
+-    s_addMLOFreqCandidates(pEP, freqListStr, sizeof(freqListStr), " ");
++    s_buildFreqList(pEP, freqListStr, sizeof(freqListStr), " ");
+     if(!swl_str_isEmpty(freqListStr)) {
+         swl_mapChar_add(global, "freq_list", freqListStr);
+     }

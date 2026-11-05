@@ -1,0 +1,98 @@
+From 543187c2770939b7952076b54b127968d57cf42a Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Sat, 16 May 2026 19:08:13 +0200
+Subject: [PATCH 04/41] test: add unit test for apis to get bstamld primary
+ link and connected count
+
+New tests:
+- check bstamld primary link and count of connected links:
+- 1) before and after connection
+- 2) before and after assigning mld link role
+- 3) after registering/unregistering to bstamld
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/36ff0fc6024bdf4cb6e4eb201930815373f51bc0]
+---
+ test/bStaMLD/test_bStaMLD.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/test/bStaMLD/test_bStaMLD.c b/test/bStaMLD/test_bStaMLD.c
+index 8db15195f7257e7133907cf93ec032654ff6cb50..1f3a6de122bc65f8caa9acc9cff771d7a2561121 100644
+--- a/test/bStaMLD/test_bStaMLD.c
++++ b/test/bStaMLD/test_bStaMLD.c
+@@ -190,10 +190,13 @@ static void test_bSTAMLD_create(void** state _UNUSED) {
+ 
+ static void test_bSTAMLD_connect1stLink(void** state _UNUSED) {
+     // set link as primary and check SSID MLD role
++    ttb_assert_ptr_eq(wld_epMld_getPrimaryLinkEp(epLink0), NULL);
++    ttb_assert_int_eq(wld_epMld_countConnectedLinkEps(epLink0), 0);
+     assert_true(swl_rc_isOk(wld_mld_setPrimaryLink(epLinkSsid0->pMldLink)));
+     wld_bStaMld_update();
+     ttb_mockTimer_goToFutureMs(100);
+     s_checkSsidMldRole(epLinkSsid0, SWL_MLO_ROLE_PRIMARY);
++    ttb_assert_ptr_eq(wld_epMld_getPrimaryLinkEp(epLink0), epLink0);
+     s_checkSsidMldLinkId(epLinkSsid0, -1);
+     s_checkBStaMldMac(bStaInstance, "BSSID", "");
+     s_checkSsidMldLinkLocalMac(epLinkSsid0, SWL_MAC_CHAR_NULL);
+@@ -210,6 +213,7 @@ static void test_bSTAMLD_connect1stLink(void** state _UNUSED) {
+     swl_typeMacBin_fromChar(&epLink0->peerLinkMac, "0F:11:22:33:44:56");
+     epLink0->isMainLink = true;
+     wld_endpoint_sync_connection(epLink0, true, EPE_NONE);
++    ttb_assert_int_eq(wld_epMld_countConnectedLinkEps(epLink0), 1);
+     wld_bStaMld_update();
+     ttb_mockTimer_goToFutureMs(100);
+ 
+@@ -228,8 +232,12 @@ static void test_bSTAMLD_addAndConnect2ndLink(void** state _UNUSED) {
+     epLink1->pRadio->operatingStandards |= M_SWL_RADSTD_BE;
+ 
+     // configure a 2nd bstamld link => invalid conf with mismatching profiles
++    ttb_assert_ptr_eq(wld_epMld_getPrimaryLinkEp(epLink1), NULL);
++    ttb_assert_int_eq(wld_epMld_countConnectedLinkEps(epLink1), 0);
+     assert_true(swl_typeInt32_commitObjectParam(epLinkSsid1->pBus, "MLDUnit", 0));
+     ttb_mockTimer_goToFutureMs(100);
++    ttb_assert_ptr_eq(wld_epMld_getPrimaryLinkEp(epLink1), epLink0);
++    ttb_assert_int_eq(wld_epMld_countConnectedLinkEps(epLink1), 1);
+     s_refreshAndCheckSsidMldStatus(epLinkSsid0, SWL_MLO_INTF_MLD_STATUS_INVALID_OTHER_CONFIG);
+     s_refreshAndCheckSsidMldStatus(epLinkSsid1, SWL_MLO_INTF_MLD_STATUS_INVALID_OTHER_CONFIG);
+ 
+@@ -284,6 +292,7 @@ static void test_bSTAMLD_addAndConnect2ndLink(void** state _UNUSED) {
+     swl_typeMacBin_fromChar(&epLink1->peerLinkMac, "0F:11:22:33:44:57");
+     epLink0->isMainLink = false;
+     wld_endpoint_sync_connection(epLink1, true, EPE_NONE);
++    ttb_assert_int_eq(wld_epMld_countConnectedLinkEps(epLink1), 2);
+     wld_bStaMld_update();
+     ttb_mockTimer_goToFutureMs(100);
+ 
+@@ -389,6 +398,8 @@ static void test_bSTAMLD_assignLinkMacs(void** state _UNUSED) {
+ 
+ static void test_bSTAMLD_disconnectAndRemove2ndLink(void** state _UNUSED) {
+     wld_endpoint_sync_connection(epLink1, false, EPE_NONE);
++    ttb_assert_int_eq(wld_epMld_countConnectedLinkEps(epLink1), 1);
++    ttb_assert_ptr_eq(wld_epMld_getPrimaryLinkEp(epLink1), epLink0);
+     // reset link id and check SSID MLD LinkID and MLD Role is preserved
+     assert_true(swl_rc_isOk(wld_mld_setLinkId(epLinkSsid1->pMldLink, -1)));
+     ttb_mockTimer_goToFutureMs(100);
+@@ -406,10 +417,14 @@ static void test_bSTAMLD_disconnectAndRemove2ndLink(void** state _UNUSED) {
+     ttb_mockTimer_goToFutureMs(100);
+     s_checkSsidMldRole(epLinkSsid1, SWL_MLO_ROLE_NONE);
+     s_refreshAndCheckSsidMldStatus(epLinkSsid1, SWL_MLO_INTF_MLD_STATUS_UNCONFIGURED);
++    ttb_assert_int_eq(wld_epMld_countConnectedLinkEps(epLink1), 0);
++    ttb_assert_ptr_eq(wld_epMld_getPrimaryLinkEp(epLink1), NULL);
+ }
+ 
+ static void test_bSTAMLD_disconnectAndRemove1stLink(void** state _UNUSED) {
+     wld_endpoint_sync_connection(epLink0, false, EPE_NONE);
++    ttb_assert_int_eq(wld_epMld_countConnectedLinkEps(epLink0), 0);
++    ttb_assert_ptr_eq(wld_epMld_getPrimaryLinkEp(epLink0), epLink0);
+     // reset link id and check SSID MLD LinkID and MLD Role is preserved
+     assert_true(swl_rc_isOk(wld_mld_setLinkId(epLinkSsid0->pMldLink, -1)));
+     ttb_mockTimer_goToFutureMs(100);
+@@ -426,6 +441,7 @@ static void test_bSTAMLD_disconnectAndRemove1stLink(void** state _UNUSED) {
+     ttb_mockTimer_goToFutureMs(100);
+     s_checkSsidMldRole(epLinkSsid0, SWL_MLO_ROLE_NONE);
+     s_refreshAndCheckSsidMldStatus(epLinkSsid0, SWL_MLO_INTF_MLD_STATUS_UNCONFIGURED);
++    ttb_assert_ptr_eq(wld_epMld_getPrimaryLinkEp(epLink0), NULL);
+ }
+ 
+ int main(int argc _UNUSED, char* argv[] _UNUSED) {

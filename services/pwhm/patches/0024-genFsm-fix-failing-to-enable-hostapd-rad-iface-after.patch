@@ -1,0 +1,38 @@
+From af94553f3aa6362c6f6fb98a52e28f58ee1f0a71 Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Fri, 18 Sep 2026 16:44:30 +0200
+Subject: [PATCH 24/41] genFsm: fix failing to enable hostapd rad iface after
+ disabling all radios
+
+Problem:
+- after DISABLing all radio's ifaces in single hostapd, pwhm is failing
+to re-ENABLE them back again
+
+Cause:
+- after DISABLing radio's main ifaces, in extender case, hostapd is
+removing the relative main iface if it's matching a secondary vaps (wlanX.Y)
+- later when calling ENABLE, hostapd is failing to find the target main
+iface for nl action
+
+Fix:
+- ensure restore main radio netdev iface before calling ENABLE cmd
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/b864959d3daf0e049b08780491343ed5864903ea]
+---
+ src/Plugin/wifiGen_fsm.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/Plugin/wifiGen_fsm.c b/src/Plugin/wifiGen_fsm.c
+index 3dd068824e83284d16591cecc232e04cae58ce52..93fa2305671c18510dea6e71a53e7acfaa4a32b0 100644
+--- a/src/Plugin/wifiGen_fsm.c
++++ b/src/Plugin/wifiGen_fsm.c
+@@ -1344,6 +1344,7 @@ static bool s_doEnableHostapd(T_Radio* pRad) {
+         SAH_TRACEZ_WARNING(ME, "%s: hostapd group is restarting: skip immediate enabling", pRad->Name);
+         return true;
+     }
++    wifiGen_hapd_restoreMainIface(pRad);
+     wld_rad_hostapd_enable(pRad);
+     pRad->fsmRad.timeout_msec = 500;
+     return true;

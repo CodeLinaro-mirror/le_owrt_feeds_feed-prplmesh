@@ -1,0 +1,83 @@
+From 6545e3768212a35131660c41c1f53761e1c9cfc1 Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Fri, 11 Sep 2026 10:50:53 +0200
+Subject: [PATCH 23/41] apmld: fix fh APMLD link remains inactive after bh EP
+ is connected
+
+Problem:
+- when bh EP is connected, radio's colocated fh APMLD link (AfAP) is
+seen inactive and relative SSID has no MLDLinkID
+
+Cause:
+- when radio is re-ENABLED after bh connection, mainAPSetupComplete do
+not trigger checking hostapd wpactrl link sock checking, as other VAPs
+are reported ENABLED through neigbor MLD links checking,
+and radio is already seen UP (wpa_s connected)
+- when neighbor APMLD was enabled, this may happen while own APMLD links
+are still disabled, leading to wrong mapping with relative SSIDs
+
+Fix:
+- mainAPSetupComplete event triggers syncOnRadUP when radio has already
+a connected endpoint: in order to manage hostapd related postup actions
+- check neighbor APMLD link status only when target AP enabling status
+has changed, which may impact other links beaconing
+- in s_fetchLinkSSIDWithNl80211, only refer to main link SSID, when
+bssid is matching link mac, or where no links are detected and no linkId
+is required
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/47ef5c89ad29f9c23fa48f26c36c376f0a51b1a3]
+---
+ src/Plugin/wifiGen_eventHandlers.c | 2 +-
+ src/Plugin/wifiGen_mld.c           | 2 +-
+ src/wld_accesspoint.c              | 6 ++++--
+ 3 files changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/src/Plugin/wifiGen_eventHandlers.c b/src/Plugin/wifiGen_eventHandlers.c
+index bf708e24bf3bd4885308005cdb8b7a7af866d33c..33b22891f3f516dcb95cc174b195743d7d951e6b 100644
+--- a/src/Plugin/wifiGen_eventHandlers.c
++++ b/src/Plugin/wifiGen_eventHandlers.c
+@@ -551,7 +551,7 @@ static void s_mainApSetupCompletedCb(void* userData, char* ifName) {
+     pRad->pFA->mfn_wrad_poschans(pRad, NULL, 0);
+     s_syncCurrentChannel(pRad, s_getLastAppliedChanReason(pRad));
+     s_markChSpecAvailable(pRad, wld_rad_getSwlChanspec(pRad));
+-    if(s_saveHapdRadDetState(pRad, CM_RAD_UP) || !wld_rad_hasActiveVap(pRad)) {
++    if(s_saveHapdRadDetState(pRad, CM_RAD_UP) || !wld_rad_hasActiveVap(pRad) || wld_rad_hasConnectedEp(pRad)) {
+         CALL_SECDMN_MGR_EXT(pRad->hostapd, fSyncOnRadioUp, ifName, true);
+     }
+     wld_rad_updateState(pRad, true);
+diff --git a/src/Plugin/wifiGen_mld.c b/src/Plugin/wifiGen_mld.c
+index 6e25c29889349f1c9de4ea5136d4d5024fe32ba3..ed13a50399cfaddf57bce537709040c6feeb2acf 100644
+--- a/src/Plugin/wifiGen_mld.c
++++ b/src/Plugin/wifiGen_mld.c
+@@ -102,7 +102,7 @@ static T_SSID* s_fetchLinkSSIDWithNl80211(const char* mldIface, int32_t linkId)
+                 pSSID = wld_mld_getNeighLinkSsidByChanInfo(pRefSsid, &swlChanSpec);
+             }
+         }
+-    } else {
++    } else if((ifaceInfo.nMloLinks == 0) && (linkId < 0)) {
+         pMac = &ifaceInfo.mac;
+         ASSERTS_FALSE(swl_mac_binIsNull(pMac), NULL, ME, "iface(%s) linkId(%d) has null mac", mldIface, linkId);
+         pSSID = wld_ssid_getSsidByMacAddress(pMac);
+diff --git a/src/wld_accesspoint.c b/src/wld_accesspoint.c
+index d29f39c012fd08c50efa800e97e233aac35dab74..6aba30bf71243953b5b9214d8b2b2abc316e50da 100644
+--- a/src/wld_accesspoint.c
++++ b/src/wld_accesspoint.c
+@@ -2637,12 +2637,14 @@ static void s_vap_updateState(T_AccessPoint* pAP) {
+ 
+ void wld_vap_updateState(T_AccessPoint* pAP) {
+     ASSERT_NOT_NULL(pAP, , ME, "NULL");
++    bool prevEna = (pAP->status == APSTI_ENABLED);
+     s_vap_updateState(pAP);
++    bool currEna = (pAP->status == APSTI_ENABLED);
+     T_SSID* pSSID = (T_SSID*) pAP->pSSID;
+     ASSERT_NOT_NULL(pSSID, , ME, "%s: SSID reference is NULL", pAP->alias);
+     wld_mldLink_t* pLink = pSSID->pMldLink;
+-    if(pLink != NULL) {
+-        /* if part of an MLD, update all links */
++    if((pLink != NULL) && (prevEna != currEna)) {
++        /* if part of an MLD, update all links , when own status has toggled */
+         wld_for_eachNeighMldLink_safe(pNgLink, pLink) {
+             T_SSID* pNgSSID = wld_mld_getLinkSsid(pNgLink);
+             if(pNgSSID && pNgSSID->AP_HOOK && (pNgSSID->AP_HOOK != pAP)) {

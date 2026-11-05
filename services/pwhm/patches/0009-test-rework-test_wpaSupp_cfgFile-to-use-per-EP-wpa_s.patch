@@ -1,0 +1,146 @@
+From 7202fbb109352ed2b5c9fa245f14174c77a8214d Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Mon, 18 May 2026 11:17:08 +0200
+Subject: [PATCH 09/41] test: rework test_wpaSupp_cfgFile to use per EP
+ wpa_supp conf file
+
+Improv:
+- rework test_wpaSupp_cfgFile to use per EP wpa_supp conf file isof a
+common temp wpa_supp config file
+- this allows to go extend test_6g_freq_list converity
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/084f8ae86b72df389038b54c91671d5d77810dd5]
+---
+ .../test_wpaSupp_cfgFile.c                    | 84 ++++++++++++++-----
+ 1 file changed, 64 insertions(+), 20 deletions(-)
+
+diff --git a/test/test_wpaSupp_cfgFile/test_wpaSupp_cfgFile.c b/test/test_wpaSupp_cfgFile/test_wpaSupp_cfgFile.c
+index 5a919e396fb4f756f9f8d8597ea03cdba9fc2db1..1642241cda29171ec11eb7b0808e707b176c9f42 100644
+--- a/test/test_wpaSupp_cfgFile/test_wpaSupp_cfgFile.c
++++ b/test/test_wpaSupp_cfgFile/test_wpaSupp_cfgFile.c
+@@ -66,50 +66,92 @@
+ #include <cmocka.h>
+ 
+ #include "wld.h"
++#include "wld_radio.h"
+ #include "wld_wpaSupp_cfgFile.h"
+ #include "nl80211/wld_wpaSupp_cfgManager_priv.h"
+ #include "../testHelper/wld_th_dm.h"
+ 
+-#define WPA_SUPP_CFG_FILE "/tmp/test_wpaSupp_cfgFile.conf"
++#include "wld_util.h"
++#include "swl/ttb/swl_ttb.h"
+ 
+ static wld_th_dm_t dm;
+ 
+ static int setup_suite(void** state _UNUSED) {
+     assert_true(wld_th_dm_init(&dm));
++    for(size_t i = 0; i < SWL_FREQ_BAND_MAX; i++) {
++        wld_th_dmBand_t* band = &dm.bandList[i];
++        T_EndPoint* pEP = band->ep;
++        ttb_assert_non_null(pEP);
++
++        char confFilePath[PATH_MAX] = {0};
++        swl_str_catFormat(confFilePath, sizeof(confFilePath), "/tmp/%s_wpaSupp.conf", pEP->alias);
++        ttb_assert_true(swl_rc_isOk(wld_secDmn_init(&pEP->wpaSupp, "wpa_supplicant", NULL, confFilePath, WPA_SUPPLICANT_CTRL_IFACE_DIR)));
++        ttb_assert_true(wld_wpaCtrlInterface_init(&pEP->wpaCtrlInterface, pEP->alias, pEP->wpaSupp->ctrlIfaceDir));
++        ttb_assert_true(wld_wpaCtrlMngr_registerInterface(pEP->wpaSupp->wpaCtrlMngr, pEP->wpaCtrlInterface));
++    }
+     return 0;
+ }
+ 
+ static int teardown_suite(void** state _UNUSED) {
++    for(size_t i = 0; i < SWL_FREQ_BAND_MAX; i++) {
++        wld_th_dmBand_t* band = &dm.bandList[i];
++        T_EndPoint* pEP = band->ep;
++        ttb_assert_non_null(pEP);
++        ttb_assert_non_null(pEP->wpaSupp);
++
++        char confFilePath[PATH_MAX] = {0};
++        swl_str_copy(confFilePath, sizeof(confFilePath), pEP->wpaSupp->cfgFile);
++        wld_wpaCtrlInterface_cleanup(&pEP->wpaCtrlInterface);
++        wld_secDmn_cleanup(&pEP->wpaSupp);
++        unlink(confFilePath);
++    }
+     wld_th_dm_destroy(&dm);
+     return 0;
+ }
+ 
+-static int teardown(void** state _UNUSED) {
+-    return unlink(WPA_SUPP_CFG_FILE);
++static void s_build_read_freqList(T_EndPoint* pEp) {
++    ttb_assert_non_null(pEp);
++    ttb_assert_non_null(pEp->pRadio);
++    T_Radio* pRad = pEp->pRadio;
++
++    swl_rc_ne rc;
++    char expectedFreqList[WLD_L_BUF] = {0};
++    bool onlyScanPscChannels = pRad->scanState.cfg.onlyScanPscChannels;
++    rc = wld_rad_printPossibleFreqsWithSep(pRad, expectedFreqList, sizeof(expectedFreqList), " ", onlyScanPscChannels, true);
++    ttb_assert_int_eq(rc, SWL_RC_OK);
++    ttb_assert_int_not_eq(swl_str_len(expectedFreqList), 0);
++    swl_freqBand_m expectedFreqBands = (swl_freqBand_m) SWL_BIT_SHIFT(pRad->operatingFrequencyBand);
++
++    char freqListStr[WLD_L_BUF] = {0};
++    rc = wld_wpaSupp_cfgFile_buildFreqList(pEp, freqListStr, sizeof(freqListStr));
++    ttb_assert_int_eq(rc, SWL_RC_OK);
++    ttb_assert_str_eq(freqListStr, expectedFreqList);
++    rc = wld_wpaSupp_cfgFile_createExt(pEp);
++    ttb_assert_int_eq(rc, SWL_RC_OK);
++    freqListStr[0] = 0;
++    wld_wpaSupp_cfgFile_readFreqList(pEp, freqListStr, sizeof(freqListStr));
++    swl_freqBand_m readFreqBands = 0;
++    wld_wpaSupp_cfgFile_readFreqBands(pEp, &readFreqBands);
++    ttb_assert_str_eq(freqListStr, expectedFreqList);
++    ttb_assert_int_eq(readFreqBands, expectedFreqBands);
+ }
+ 
+-static void test_ep_freq_list(T_EndPoint* pEp, const char* expected_freq_list) {
+-    wld_wpaSupp_config_t* conf = NULL;
+-    assert_int_equal(SWL_RC_OK, wld_wpaSupp_cfgFile_create(pEp, WPA_SUPP_CFG_FILE));
+-    assert_int_equal(true, wld_wpaSupp_loadConfig(&conf, WPA_SUPP_CFG_FILE));
+-    if(expected_freq_list) {
+-        assert_int_equal(true, swl_map_has(&conf->global, "freq_list"));
+-        assert_string_equal(expected_freq_list, swl_map_get(&conf->global, "freq_list"));
+-    } else {
+-        assert_int_equal(false, swl_map_has(&conf->global, "freq_list"));
+-    }
+-    wld_wpaSupp_deleteConfig(conf);
++static void test_build_read_freqList_2g(void** state _UNUSED) {
++    s_build_read_freqList(dm.bandList[SWL_FREQ_BAND_2_4GHZ].ep);
++}
++
++static void test_build_read_freqList_5g(void** state _UNUSED) {
++    s_build_read_freqList(dm.bandList[SWL_FREQ_BAND_5GHZ].ep);
+ }
+ 
+ static void test_6g_freq_list_when_OnlyScanPscChannels_disabled(void** state _UNUSED) {
+-    const char* expected_freq_list = "5955 5975 5995 6015 6035 6055 6075 6095 6115 6135 6155 6175 6195 6215 6235 6255 6275 6295 6315 6335 6355 6375 6395 6415 6435 6455 6475 6495 6515 6535 6555 6575 6595 6615 6635 6655 6675 6695 6715 6735 6755 6775 6795 6815 6835 6855 6875 6895 6915 6935 6955 6975 6995 7015 7035 7055 7075 7095 7115";
+-    test_ep_freq_list(dm.bandList[SWL_FREQ_BAND_6GHZ].ep, expected_freq_list);
++    dm.bandList[SWL_FREQ_BAND_6GHZ].rad->scanState.cfg.onlyScanPscChannels = 0;
++    s_build_read_freqList(dm.bandList[SWL_FREQ_BAND_6GHZ].ep);
+ }
+ 
+ static void test_6g_freq_list_when_OnlyScanPscChannels_enabled(void** state _UNUSED) {
+-    const char* expected_freq_list = "5975 6055 6135 6215 6295 6375 6455 6535 6615 6695 6775 6855 6935 7015 7095";
+     dm.bandList[SWL_FREQ_BAND_6GHZ].rad->scanState.cfg.onlyScanPscChannels = 1;
+-    test_ep_freq_list(dm.bandList[SWL_FREQ_BAND_6GHZ].ep, expected_freq_list);
++    s_build_read_freqList(dm.bandList[SWL_FREQ_BAND_6GHZ].ep);
+ }
+ 
+ int main(int argc _UNUSED, char* argv[] _UNUSED) {
+@@ -118,8 +160,10 @@ int main(int argc _UNUSED, char* argv[] _UNUSED) {
+     sahTraceAddZone(sahTraceLevel(), "wSupCfg");
+     sahTraceAddZone(sahTraceLevel(), "fileMgr");
+     const struct CMUnitTest tests[] = {
+-        cmocka_unit_test_teardown(test_6g_freq_list_when_OnlyScanPscChannels_disabled, teardown),
+-        cmocka_unit_test_teardown(test_6g_freq_list_when_OnlyScanPscChannels_enabled, teardown),
++        cmocka_unit_test(test_build_read_freqList_2g),
++        cmocka_unit_test(test_build_read_freqList_5g),
++        cmocka_unit_test(test_6g_freq_list_when_OnlyScanPscChannels_disabled),
++        cmocka_unit_test(test_6g_freq_list_when_OnlyScanPscChannels_enabled),
+     };
+     return cmocka_run_group_tests(tests, setup_suite, teardown_suite);
+ }

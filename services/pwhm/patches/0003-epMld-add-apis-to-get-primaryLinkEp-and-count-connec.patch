@@ -1,0 +1,93 @@
+From 443c34084c902166778d5075b652bc6e34fba6b4 Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Sat, 16 May 2026 18:32:46 +0200
+Subject: [PATCH 03/41] epMld: add apis to get primaryLinkEp and count
+ connected bstamld links
+
+New apis:
+- add api to get bstamld primary link ep
+- add api to count bstamld links per connection status
+- add api to count bstamld connected links
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/3dfb929eb52d501be9b327450f41996e20d36b02]
+---
+ include/wld/wld_epMld.h | 28 ++++++++++++++++++++++++++++
+ src/wld_epMld.c         | 29 +++++++++++++++++++++++++++++
+ 2 files changed, 57 insertions(+)
+
+diff --git a/include/wld/wld_epMld.h b/include/wld/wld_epMld.h
+index 79fd95f439cb182dcd9d442f041d345c830e6582..073419e9893e1ba92a66ec7d87078c5cbe5cdf4f 100644
+--- a/include/wld/wld_epMld.h
++++ b/include/wld/wld_epMld.h
+@@ -116,4 +116,32 @@ T_EndPoint* wld_epMld_fetchLinkEpByConnectionBssid(T_EndPoint* pEP, swl_macBin_t
+  */
+ const swl_macBin_t* wld_epMld_getPeerLinkMac(T_EndPoint* pEP);
+ 
++/**
++ * @brief return bSTAMLD's primary link EP context
++ *
++ * @param pEP pointer to endpoint context (bstamld reference link)
++ *
++ * @return primary link EP context
++ */
++T_EndPoint* wld_epMld_getPrimaryLinkEp(T_EndPoint* pEP);
++
++/**
++ * @brief count bSTAMLD's links matching a given connection status
++ *
++ * @param pEP pointer to endpoint context (bstamld reference link)
++ * @param connSt connection status to match
++ *
++ * @return count of matched bstamld links
++ */
++uint32_t wld_epMld_countLinkEpsByConnectionStatus(T_EndPoint* pEP, wld_epConnectionStatus_e connSt);
++
++/**
++ * @brief count fully connected bSTAMLD's links
++ *
++ * @param pEP pointer to endpoint context (bstamld reference link)
++ *
++ * @return count of connected (/established) bstamld links
++ */
++uint32_t wld_epMld_countConnectedLinkEps(T_EndPoint* pEP);
++
+ #endif /* SRC_INCLUDE_WLD_WLD_EPMLD_H_ */
+diff --git a/src/wld_epMld.c b/src/wld_epMld.c
+index 8d87f8c8b9172d97d0758aa5d4aac35f07e347b5..d82b5492cb05b504eed57a88cd97e248c3ad2dcd 100644
+--- a/src/wld_epMld.c
++++ b/src/wld_epMld.c
+@@ -215,3 +215,32 @@ const swl_macBin_t* wld_epMld_getPeerLinkMac(T_EndPoint* pEP) {
+     return &pEP->peerLinkMac;
+ }
+ 
++T_EndPoint* wld_epMld_getPrimaryLinkEp(T_EndPoint* pEP) {
++    ASSERTS_NOT_NULL(pEP, NULL, ME, "NULL");
++    ASSERTS_NOT_NULL(pEP->pSSID, NULL, ME, "No mapped ssid");
++    T_SSID* pPrimLinkSsid = wld_mld_getPrimaryLinkSsid(pEP->pSSID->pMldLink);
++    ASSERTS_NOT_NULL(pPrimLinkSsid, NULL, ME, "No prim link ssid");
++    return pPrimLinkSsid->ENDP_HOOK;
++}
++
++uint32_t wld_epMld_countLinkEpsByConnectionStatus(T_EndPoint* pEP, wld_epConnectionStatus_e connSt) {
++    ASSERTS_NOT_NULL(pEP, 0, ME, "NULL");
++    ASSERTS_NOT_NULL(pEP->pSSID, 0, ME, "NULL");
++    uint32_t count = 0;
++    wld_for_eachNeighMldLink_safe(pNgLink, pEP->pSSID->pMldLink) {
++        T_SSID* pNgLinkSsid = pNgLink->pSSID;
++        if(!pNgLinkSsid || !pNgLinkSsid->ENDP_HOOK) {
++            continue;
++        }
++        T_EndPoint* pNgLinkEP = pNgLinkSsid->ENDP_HOOK;
++        if(wld_ssid_hasValidMLDRole(pNgLinkSsid) &&
++           (pNgLinkEP->connectionStatus == connSt)) {
++            count++;
++        }
++    }
++    return count;
++}
++
++uint32_t wld_epMld_countConnectedLinkEps(T_EndPoint* pEP) {
++    return wld_epMld_countLinkEpsByConnectionStatus(pEP, EPCS_CONNECTED);
++}

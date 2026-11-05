@@ -1,0 +1,66 @@
+From 0ddc0f5c649d8e4d0dcc02f57d9b20d2f7382cb8 Mon Sep 17 00:00:00 2001
+From: sushmitha <sushmitha.s_ext@softathome.com>
+Date: Thu, 2 Apr 2026 11:50:03 +0530
+Subject: [PATCH 01/41] pWHM: AccessPoint/Endpoint: hide Security passphrase
+ parameter values on read
+
+Problem:
+- Passphrase parameters under AccessPoint and Endpoint expose sensitive plaintext values via TR-181 and OBUSPA read operations.
+
+Fix:
+- Updated ODL configuration to restrict visibility of sensitive parameters.
+
+References : PPW-891
+Signed-off-by: Sushmitha S <sushmitha.s_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/1058b9cdb8b714479e0d49b25e824a2fa13b2bbb]
+---
+ odl/wld_accesspoint.odl | 2 ++
+ odl/wld_endpoint.odl    | 8 ++++++--
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/odl/wld_accesspoint.odl b/odl/wld_accesspoint.odl
+index 5c2e98161bfc9b028b19f23ef120ad9a133052c0..9152e69c9fbd803c262b48e4515a4dec24e9f0c9 100644
+--- a/odl/wld_accesspoint.odl
++++ b/odl/wld_accesspoint.odl
+@@ -750,6 +750,7 @@ define rrm_t{
+ 			 * KeyPassphrase should be between 8 and 63 ascii characters for normal keys,
+ 			 * or 256 bit secret, entered as a 64 characters hex key.*/
+ 			%persistent string KeyPassphrase = "password" {
++				on action read call hide_value;
+ 				on action validate call wld_ap_validateKeyPassPhrase_pvf;
+ 			}
+ 			/** <p>A human-readable mirror of the KeyPassphrase parameter.
+@@ -817,6 +818,7 @@ define rrm_t{
+ 			 *   @version 10.0
+ 			 */
+ 			%persistent string SAEPassphrase{
++				on action read call hide_value;
+ 				on action validate call wld_ap_validateSaePassphrase_pvf;
+ 				default "";
+ 			}
+diff --git a/odl/wld_endpoint.odl b/odl/wld_endpoint.odl
+index c22bba8315415f1becf61a529424ca0415b1a95e..7990ebbb181a57bde35cceff7f6c14122e3331a7 100644
+--- a/odl/wld_endpoint.odl
++++ b/odl/wld_endpoint.odl
+@@ -683,7 +683,9 @@
+ 				 * string, regardless of the actual value.
+ 				 * KeyPassphrase should be between 8 and 63 ascii characters for normal keys,
+ 				 * or 256 bit secret, entered as a 64 characters hex key.*/
+-				%persistent string KeyPassphrase;
++				%persistent string KeyPassphrase {
++					on action read call hide_value;
++				}
+ 
+ 				/** A passphrase from which the PreSharedKey is to be
+ 				 * generated, for WPA-Personal or WPA2-Personal or
+@@ -708,7 +710,9 @@
+ 			         *  When read, this parameter returns an empty string, regardless of
+ 			         *  the actual value.
+ 			         */
+-				%persistent string SAEPassphrase;
++				%persistent string SAEPassphrase {
++					on action read call hide_value;
++				}
+ 
+ 				/** A passphrase for WPA3-Personal or WPA3-Personal-Transition
+ 				 *  security modes.

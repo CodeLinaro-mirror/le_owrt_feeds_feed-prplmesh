@@ -1,0 +1,99 @@
+From d7b0320a2916df630d934f5831727f930e29049f Mon Sep 17 00:00:00 2001
+From: Mohammed SI ALI <mohammed.siali@softathome.com>
+Date: Wed, 26 Aug 2026 13:58:51 +0200
+Subject: [PATCH 14/41] wpaSupp: harden MLO status parsing
+
+- Reject invalid parser outputs
+- Avoid relational comparisons with a null next section
+- Free all partial allocations on allocation failures.
+
+References: PPM-4222
+Signed-off-by: Mohammed SI ALI <mohammed.siali@softathome.com>
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/826c02ad0d69660626218bfe84d165ea1d194f00]
+---
+ src/nl80211/wld_wpaSupp_ep_api.c | 48 ++++++++++++++++++++++----------
+ 1 file changed, 34 insertions(+), 14 deletions(-)
+
+diff --git a/src/nl80211/wld_wpaSupp_ep_api.c b/src/nl80211/wld_wpaSupp_ep_api.c
+index 5f4ba61121cd7b678751f2453ef046780c7d5569..fa46ed0a35dcb3ff7d294ad54bcb175ad804a921 100644
+--- a/src/nl80211/wld_wpaSupp_ep_api.c
++++ b/src/nl80211/wld_wpaSupp_ep_api.c
+@@ -672,7 +672,29 @@ swl_rc_ne wld_wpaSupp_fetchChanSpecFromStatusDetails(const char* statusInfo, swl
+     return SWL_RC_OK;
+ }
+ 
++/**
++ * @brief Free a list of parsed MLO link status sections
++ *
++ * @param nbLinks number of allocated link status sections
++ * @param ppLinkDetails array containing the allocated link status sections
++ *
++ * @return void
++ */
++static void s_freeMloLinkStatusDetails(size_t nbLinks, char** ppLinkDetails) {
++    if(ppLinkDetails == NULL) {
++        return;
++    }
++    for(size_t i = 0; i < nbLinks; i++) {
++        W_SWL_FREE(ppLinkDetails[i]);
++    }
++    W_SWL_FREE(ppLinkDetails);
++}
++
+ swl_rc_ne wld_wpaSupp_fetchMloLinkStatusDetails(const char* mloStatusInfo, size_t* pNbLinks, char*** pppOutLinksDetails) {
++    ASSERTS_NOT_NULL(pNbLinks, SWL_RC_INVALID_PARAM, ME, "NULL");
++    ASSERTS_NOT_NULL(pppOutLinksDetails, SWL_RC_INVALID_PARAM, ME, "NULL");
++    *pNbLinks = 0;
++    *pppOutLinksDetails = NULL;
+     ASSERTS_STR(mloStatusInfo, SWL_RC_NOT_FOUND, ME, "empty");
+ 
+     /**
+@@ -698,35 +720,33 @@ swl_rc_ne wld_wpaSupp_fetchMloLinkStatusDetails(const char* mloStatusInfo, size_
+         char** newSectionList = realloc(ppLinkDetails, (nbLinks + 1) * sizeof(char*));
+         if(newSectionList == NULL) {
+             SAH_TRACEZ_ERROR(ME, "fail to alloc more sections (cur:%zu)", nbLinks);
+-            break;
++            s_freeMloLinkStatusDetails(nbLinks, ppLinkDetails);
++            return SWL_RC_ERROR;
+         }
+         ppLinkDetails = newSectionList;
+-        size_t sectionLen = (pNext > p) ? (size_t) (pNext - p) : swl_str_len(p);
++        size_t sectionLen = (pNext != NULL) ? (size_t) (pNext - p) : swl_str_len(p);
+         if(p[sectionLen - 1] == '\n') {
+             sectionLen--;
+         }
+         char* section = strndup(p, sectionLen);
+         if(section == NULL) {
+             SAH_TRACEZ_ERROR(ME, "fail to save more sections (cur:%zu)", nbLinks);
+-            break;
++            s_freeMloLinkStatusDetails(nbLinks, ppLinkDetails);
++            return SWL_RC_ERROR;
+         }
+         ppLinkDetails[nbLinks] = section;
+         nbLinks += 1;
+     }
+ 
+-    if((pNbLinks != NULL) && (pppOutLinksDetails != NULL)) {
+-        SAH_TRACEZ_INFO(ME, "found %zu link sections", nbLinks);
+-        *pNbLinks = nbLinks;
+-        *pppOutLinksDetails = ppLinkDetails;
+-    } else if(ppLinkDetails != NULL) {
+-        SAH_TRACEZ_WARNING(ME, "clear %zu section (no target list)", nbLinks);
+-        for(size_t i = 0; i < nbLinks; i++) {
+-            W_SWL_FREE(ppLinkDetails[i]);
+-        }
+-        W_SWL_FREE(ppLinkDetails);
++    if(nbLinks == 0) {
++        s_freeMloLinkStatusDetails(nbLinks, ppLinkDetails);
++        return SWL_RC_NOT_FOUND;
+     }
+ 
+-    return (!nbLinks) ? SWL_RC_NOT_FOUND : SWL_RC_OK;
++    SAH_TRACEZ_INFO(ME, "found %zu link sections", nbLinks);
++    *pNbLinks = nbLinks;
++    *pppOutLinksDetails = ppLinkDetails;
++    return SWL_RC_OK;
+ }
+ 
+ swl_rc_ne wld_wpaSupp_fetchMloLinkStatusDetailsByFreqBand(const char* mloStatusInfo, swl_freqBandExt_e band, char* linkStatus, size_t linkStatusSize) {

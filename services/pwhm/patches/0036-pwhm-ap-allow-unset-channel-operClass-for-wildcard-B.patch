@@ -1,0 +1,55 @@
+From 31f44d9a507400023e7d529cec8791ff3fc8b37a Mon Sep 17 00:00:00 2001
+From: Cem KOC <cem.koc@airties.com>
+Date: Wed, 16 Sep 2026 14:31:39 +0300
+Subject: [PATCH 36/41] pwhm: ap: allow unset channel/operClass for wildcard
+ BSS transfer target
+
+Problem:
+- sendBssTransferRequest() rejects the call with invalid_function_argument
+when channel or operClass is 0, even if the target BSSID is the broadcast
+(wildcard) address.
+
+Cause:
+- The channel and operClass assertions are applied unconditionally, while
+a wildcard target lets the STA choose its own target BSS and therefore
+carries no meaningful target channel or operating class.
+
+Fix:
+- Only validate channel and operClass when a concrete target BSSID is
+provided, next to the existing target mac validity check.
+- Per EasyMesh 17.2.29 (Steering Request TLV) both
+Target_BSS_Operating_Class and Target_BSS_Channel_Number are ignored by
+the receiver when Target_BSSID is the wildcard BSSID.
+
+Closes: PPW-2402
+Signed-off-by: Cem KOC <cem.koc@airties.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/bde101bf4eb87884c7b00eeb02c9b017cab30832]
+---
+ src/ApMgt/wld_ap_bss_transfer.c | 9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/src/ApMgt/wld_ap_bss_transfer.c b/src/ApMgt/wld_ap_bss_transfer.c
+index 52d7fc1a975b9d36a616e34f482db3d2726d3834..a611f194b0272aadde47afcb0c1f60010c056de5 100644
+--- a/src/ApMgt/wld_ap_bss_transfer.c
++++ b/src/ApMgt/wld_ap_bss_transfer.c
+@@ -247,15 +247,16 @@ amxd_status_t _sendBssTransferRequest(amxd_object_t* object,
+     ASSERT_TRUE(swl_typeMacChar_fromChar(&params.targetBssid, bssid), amxd_status_invalid_function_argument,
+                 ME, "invalid target argument %s", bssid);
+ 
+-    /* The target BSSID being broadcast allows the STA to choose its own target */
++    /* The target BSSID being broadcast allows the STA to choose its own target.
++     * Per EasyMesh 17.2.29 (Steering Request TLV), operating class and channel
++     * are ignored by the receiver for the wildcard BSSID, so accept them unset. */
+     if(!swl_mac_charIsBroadcast(&params.targetBssid)) {
+         ASSERT_TRUE(swl_mac_charIsValidStaMac(&params.targetBssid),
+                     amxd_status_invalid_function_argument, ME, "invalid target mac %s", bssid);
++        ASSERT_NOT_EQUALS(params.channel, 0, amxd_status_invalid_function_argument, ME, "invalid channel argument");
++        ASSERT_NOT_EQUALS(params.operClass, 0, amxd_status_invalid_function_argument, ME, "invalid operClass argument");
+     }
+ 
+-    ASSERT_NOT_EQUALS(params.channel, 0, amxd_status_invalid_function_argument, ME, "invalid channel argument");
+-    ASSERT_NOT_EQUALS(params.operClass, 0, amxd_status_invalid_function_argument, ME, "invalid operClass argument");
+-
+     SAH_TRACEZ_NOTICE(ME, "Steer %s @ %s 2 %s/%u:%u retry %u x %u ms",
+                       params.sta.cMac, pAP->alias, params.targetBssid.cMac,
+                       params.operClass, params.channel, retries, ms_wait_time);

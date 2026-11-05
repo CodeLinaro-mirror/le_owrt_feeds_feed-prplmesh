@@ -1,0 +1,95 @@
+From 076c0991975d644c080b93354d441942e9951b36 Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Mon, 18 May 2026 08:44:28 +0200
+Subject: [PATCH 07/41] test: fix default secMode for 6g APs/EPs to WPA3
+
+Problem:
+- test default conf is using WPA2 isof WPA3 for 6g related SSIDs
+
+Fix:
+- fix default secMode for 6g APs/EPs to WPA3-Personal
+- set enabled secMode for testRadioPowerDown to ensure having shared
+secMode between neighbor BSSs
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/93059c0e8e0fb69a73e1b57beaecb2bf70baef84]
+---
+ test/commonData/wld_defaults/00_wld-defaults.odl |  8 ++++----
+ test/testRadioPowerDown/test_radioPowerDown.c    | 11 +++++++----
+ 2 files changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/test/commonData/wld_defaults/00_wld-defaults.odl b/test/commonData/wld_defaults/00_wld-defaults.odl
+index 1ef7df8ad7b4eb7d6fe5952080ccaaf85dc013b5..65d2a8e2a8e9b1803206b35a9f17b293c2ec406b 100644
+--- a/test/commonData/wld_defaults/00_wld-defaults.odl
++++ b/test/commonData/wld_defaults/00_wld-defaults.odl
+@@ -232,7 +232,7 @@
+                 parameter MultiAPType = "FronthaulBSS,BackhaulBSS";
+                 parameter MaxAssociatedDevices = 32;
+                 object Security {
+-                    parameter ModeEnabled = "WPA2-Personal";
++                    parameter ModeEnabled = "WPA3-Personal";
+                     parameter KeyPassphrase = "prplMesh";
+                     parameter RekeyingInterval = 0;
+                 }
+@@ -320,7 +320,7 @@
+                 object Stats {
+                     parameter TxBytes = 12991;
+                     parameter TxPacketCount = 65;
+-                    parameter SecurityModeEnabled = "WPA2-Personal";
++                    parameter SecurityModeEnabled = "WPA3-Personal";
+                 }
+                 object Profile {
+                     instance add ("prof1"){
+@@ -328,7 +328,7 @@
+                         parameter Enable = 1;
+                         parameter SSID = "prplMesh-WHM-5g";
+                         object Security {
+-                            parameter ModeEnabled = "WPA2-Personal";
++                            parameter ModeEnabled = "WPA3-Personal";
+                             parameter KeyPassphrase = "prplMesh";
+                         }
+                     }
+@@ -337,7 +337,7 @@
+                         parameter Enable = 0;
+                         parameter SSID = "prplMesh-WHM-5g";
+                         object Security {
+-                            parameter ModeEnabled = "WPA2-Personal";
++                            parameter ModeEnabled = "WPA3-Personal";
+                             parameter KeyPassphrase = "prplMesh";
+                         }
+                     }
+diff --git a/test/testRadioPowerDown/test_radioPowerDown.c b/test/testRadioPowerDown/test_radioPowerDown.c
+index f69b37d75807001dbb98bb3f1e7e5c4ef612feb7..72387e22db1570b470af122398cd576341cbb05a 100644
+--- a/test/testRadioPowerDown/test_radioPowerDown.c
++++ b/test/testRadioPowerDown/test_radioPowerDown.c
+@@ -82,14 +82,15 @@ typedef struct {
+     char ssid[SSID_NAME_LEN];       // Wi-Fi network SSID.
+     char bssid[ETHER_ADDR_STR_LEN]; // BSSID of the access point.
+     swl_freqBand_e band;            // Wi-Fi frequency band.
++    swl_security_apMode_e secMode;  // Enabled security mode
+ } wifi_config;
+ 
+ #define NR_TEST_WIFI_LIST 3
+ 
+ wifi_config wifiList[NR_TEST_WIFI_LIST] = {
+-    {"prplMesh-WHM", "AA:BB:CC:DD:EE:01", SWL_FREQ_BAND_2_4GHZ},
+-    {"prplMesh-WHM", "AA:BB:CC:DD:EE:11", SWL_FREQ_BAND_5GHZ},
+-    {"prplMesh-WHM", "AA:BB:CC:DD:EE:21", SWL_FREQ_BAND_6GHZ}
++    {"prplMesh-WHM", "AA:BB:CC:DD:EE:01", SWL_FREQ_BAND_2_4GHZ, SWL_SECURITY_APMODE_WPA3_P_TM},
++    {"prplMesh-WHM", "AA:BB:CC:DD:EE:11", SWL_FREQ_BAND_5GHZ, SWL_SECURITY_APMODE_WPA3_P_TM},
++    {"prplMesh-WHM", "AA:BB:CC:DD:EE:21", SWL_FREQ_BAND_6GHZ, SWL_SECURITY_APMODE_WPA3_P}
+ };
+ 
+ static int s_kick_sta_reason_call_count = 0;
+@@ -257,7 +258,9 @@ static void update_bssid_vaps() {
+     for(int i = 0; i < NR_TEST_WIFI_LIST; i++) {
+         vap = dm.bandList[wifiList[i].band].vapPriv;
+         SWL_MAC_CHAR_TO_BIN(&vap->pSSID->BSSID, wifiList[i].bssid);
+-        swl_str_copy(vap->pSSID->SSID, sizeof(wifiList[i].ssid), wifiList[i].ssid);
++        swl_typeCharPtr_commitObjectParam(vap->pSSID->pBus, "SSID", wifiList[i].ssid);
++        swl_typeCharPtr_commitObjectParam(amxd_object_get(vap->pBus, "Security"), "ModeEnabled", (char*) swl_security_apMode_str[wifiList[i].secMode]);
++        ttb_mockTimer_goToFutureMs(10);
+     }
+ }
+ 

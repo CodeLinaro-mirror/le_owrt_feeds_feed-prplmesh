@@ -1,0 +1,95 @@
+From 9d221e7a8c1db70bcaf81db6f71b300610907e7c Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Fri, 14 Aug 2026 10:01:45 +0200
+Subject: [PATCH 02/41] genFsm: fix loop connection of mxl ep6g vs freedom
+ ap6gbackhaul
+
+Problem:
+- mxl ep6g gets connected by keep disconnecting/reconnection in loop to
+freedom ap6gbackhaul
+
+Cause:
+- ep6g0 gets connected with wifi_generation 6 (11ax = HE) and bw 20MHz,
+but pwhm tries to improve bw (seen 320MHz in scan results),
+by reconnecting it.
+
+Fix:
+- only try to improve connection bw to highest applicable bw with
+regards to peer operating standards and local supported channel bws
+- fetch connection info per link mac
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/6be851113012a798ddd0893dcc7746ebdb2ffa68]
+---
+ src/Plugin/wifiGen_eventHandlers.c |  3 +++
+ src/Plugin/wifiGen_fsm.c           | 22 +++++++++++++++++++++-
+ src/wld_endpoint.c                 |  1 +
+ 3 files changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/src/Plugin/wifiGen_eventHandlers.c b/src/Plugin/wifiGen_eventHandlers.c
+index 57e315a112d19824f6ec29bf84520e855502645a..0d765825a3bc183db1110bba5ce9255a29f7b2ed 100644
+--- a/src/Plugin/wifiGen_eventHandlers.c
++++ b/src/Plugin/wifiGen_eventHandlers.c
+@@ -1586,6 +1586,9 @@ static void s_stationConnectedEvt(void* pRef, char* ifName, swl_macBin_t* bBssid
+         pEP->isMainLink = true;
+     }
+ 
++    /* early save current connection operStd */
++    pEP->stats.operatingStandard = connInfo.radStd;
++
+     SAH_TRACEZ_INFO(ME, "%s: station connected to ssid(%s) bssid(%s) peerLinkMac(%s)",
+                     pEP->Name, connInfo.ssid, swl_typeMacBin_toBuf32Ref(bBssidMac).buf, swl_typeMacBin_toBuf32Ref(&pEP->peerLinkMac).buf);
+     wld_endpoint_setConnectionStatus(pEP, EPCS_CONNECTED, EPE_NONE);
+diff --git a/src/Plugin/wifiGen_fsm.c b/src/Plugin/wifiGen_fsm.c
+index 5be4091706607e80d8c5758f26d2b328dd7058f2..3c2e7e6e09e259d69e013e6f2a075d52e2bfff5d 100644
+--- a/src/Plugin/wifiGen_fsm.c
++++ b/src/Plugin/wifiGen_fsm.c
+@@ -1598,6 +1598,26 @@ static swl_chanspec_t s_getEpBssTgtChanspec(T_EndPoint* pEP, swl_macBin_t* bssid
+             //only pre-connect to 2g/20MHz
+             chanSpec = (swl_chanspec_t) SWL_CHANSPEC_NEW(chanSpec.channel, SWL_BW_20MHZ, chanSpec.band);
+         }
++        swl_radBw_e radBw = swl_chanspec_toRadBw(&chanSpec);
++        swl_radStd_m tgtOperStds = result.operatingStandards;
++        if((pEP->connectionStatus == EPCS_CONNECTED) && (pEP->stats.operatingStandard != SWL_RADSTD_AUTO)) {
++            tgtOperStds = SWL_BIT_SHIFT(pEP->stats.operatingStandard);
++        }
++        if(radBw != SWL_RAD_BW_AUTO) {
++            /**
++             * assume as supported by peer BSS, all lower or equal channel bandwidths,
++             * to the one reported in the scan result (Beacon/ProbeResp)
++             */
++            swl_radBw_m peerSuppRadBws = ((1 << (radBw + 1)) - 1);
++            swl_radBw_m tgtAppRadBws = swl_chanspec_getApplicableRadBwMask(peerSuppRadBws, tgtOperStds) & pEP->pRadio->supportedChannelBandwidth;
++            if(tgtAppRadBws && !SWL_BIT_IS_SET(tgtAppRadBws, radBw)) {
++                /** target highest applicable bandwidth with target operating standard(s) */
++                swl_radBw_e tgtRadBw = swl_chanspec_getHighestRadBw(tgtAppRadBws);
++                chanSpec = swl_chanspec_fromDm(chanSpec.channel, tgtRadBw, chanSpec.band);
++            }
++        }
++        SAH_TRACEZ_INFO(ME, "%s: deduce EpBssTgtChanspec(%s) with operStds (%#x)", pEP->Name,
++                        swl_typeChanspecExt_toBuf32Ref(&chanSpec).buf, tgtOperStds);
+     }
+     return chanSpec;
+ }
+@@ -1961,7 +1981,7 @@ static void s_syncOnEpStartConnFail(void* userData, char* ifName, int error) {
+     SAH_TRACEZ_INFO(ME, "%s: EP failed to start connection: error(%d)", pEP->Name, error);
+     ASSERTS_TRUE(wifiGen_hapd_isAlive(pRad), , ME, "%s: hapd not running", pRad->Name);
+     if(error == -EBUSY) {
+-        swl_macBin_t* bssid = &pEP->currConnBssid;
++        swl_macBin_t* bssid = &pEP->peerLinkMac;
+         swl_wirelessDevice_infoElements_t remoteApProbRespIEs;
+         memset(&remoteApProbRespIEs, 0, sizeof(remoteApProbRespIEs));
+         swl_chanspec_t chanSpec = s_getEpBssTgtChanspec(pEP, bssid, &remoteApProbRespIEs);
+diff --git a/src/wld_endpoint.c b/src/wld_endpoint.c
+index bb7c0106dc29f7b06520f7f20dbd2d404b4415f2..c5215c89101300b1abc6562df4c614ad86ca2dea 100644
+--- a/src/wld_endpoint.c
++++ b/src/wld_endpoint.c
+@@ -1871,6 +1871,7 @@ static void s_setEndpointStatus(T_EndPoint* pEP,
+             wld_ssid_setMLDLinkID(pEP->pSSID, NO_LINK_ID);
+             swl_mac_binClear(&pEP->peerLinkMac);
+             pEP->isMainLink = false;
++            wld_endpoint_resetStats(pEP);
+         }
+         if(connectionStatus == EPCS_CONNECTED) {
+             pEP->assocStats.lastAssocTime = pEP->lastConnStatusChange;

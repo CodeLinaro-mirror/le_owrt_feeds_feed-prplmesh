@@ -1,0 +1,59 @@
+From 31afcea36c8a43cd4f27e69088bfd38f4c052f7e Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Sat, 16 May 2026 20:00:05 +0200
+Subject: [PATCH 06/41] ep: fix reconnect timer not triggering on 6Ghz.
+
+Problem:
+- on MLO 6Ghz EP, reconnect timer is not always triggering,
+or triggering slower than expected.
+
+Cause:
+- Two small problems seen in reconnect timer speed. The first
+is that the "reconnectTimer" should trigger quicker after disconnect.
+However, if the 6GHz was a passive in either a dual band MLO or
+single band 5GHz connection, the reconnectTimer would revert to
+full delay, causing significantly slower toggle and clean-up time.
+- Second problem is that in these cases, the radio is sometimes listed
+as dormant, as in when the endpoint is enabled but not connected,
+the correct state is dormant, which is used  as a check for DFS clearing
+on endpoint as is.
+- However, since there should not be DFS clearing on 2.4 and 6GHz, this
+check is not relevant.
+
+Solution:
+- check on the actual radio state to ensure DFS clear is happening
+when delaying the endpoint reconfiguration.
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/cc33cca8b3dae6a0c9cc4d66848b07f94fa3b36b]
+---
+ src/wld_endpoint.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/src/wld_endpoint.c b/src/wld_endpoint.c
+index 861ec9ac1d39b9bdbda558ae28f987aca8e750b3..60a98a120e2f274a840fea21dec83b4d0214d358 100644
+--- a/src/wld_endpoint.c
++++ b/src/wld_endpoint.c
+@@ -1473,7 +1473,11 @@ void wld_endpoint_setConnectionStatus(T_EndPoint* pEP, wld_epConnectionStatus_e
+     if(!connected && wld_endpoint_isReady(pEP) && (mldRole != SWL_MLO_ROLE_AUXILIARY) && (connectionStatus != EPCS_PASSIVE)) {
+         //We are not connected, but we should be. Start the reconnection timer.
+ 
+-        uint32_t targetInterval = (previousStatus == EPCS_CONNECTED) ? pEP->reconnectDelay * 1000 : pEP->reconnectInterval * 1000;
++        uint32_t targetInterval = pEP->reconnectInterval * 1000;
++        if((previousStatus == EPCS_CONNECTED) || (previousStatus == EPCS_PASSIVE)) {
++            targetInterval = pEP->reconnectDelay * 1000;
++        }
++
+         amxp_timer_state_t timerState = amxp_timer_get_state(pEP->reconnectTimer);
+         if((timerState != amxp_timer_running) && (timerState != amxp_timer_started)) {
+             amxp_timer_start(pEP->reconnectTimer, targetInterval);
+@@ -2197,7 +2201,7 @@ static void endpoint_reconnect_handler(amxp_timer_t* timer _UNUSED, void* userda
+     SAH_TRACEZ_INFO(ME, "%s: status %u timeInfo %u/%u chanInfo %u/%u", pRad->Name, pRad->status,
+                     curStateTime, clearTimeSec, pRad->channel, pRad->runningChannelBandwidth);
+ 
+-    if(pRad->status == RST_DORMANT) {
++    if((pRad->status == RST_DORMANT) && (pRad->detailedState == CM_RAD_FG_CAC)) {
+         if(clearTimeSec == 0) {
+             SAH_TRACEZ_ERROR(ME, "%s: dormant, no dfs chan %u/%u", pRad->Name, pRad->channel, pRad->runningChannelBandwidth);
+             clearTimeSec = 60;

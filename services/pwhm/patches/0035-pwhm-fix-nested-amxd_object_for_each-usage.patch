@@ -1,0 +1,85 @@
+From 3d0a5c2b510c05456f2327e2fa58bbc005da3201 Mon Sep 17 00:00:00 2001
+From: Faiez HENTATI <faiez.hentati_ext@softathome.com>
+Date: Wed, 30 Sep 2026 10:05:50 +0100
+Subject: [PATCH 35/41] pwhm: fix nested amxd_object_for_each usage
+
+Replace amxd_object_for_each() with amxd_object_iterate() in nested
+loops to comply with the prplOS API requirements.
+
+References: PPW-2450
+Signed-off-by: Faiez HENTATI <faiez.hentati_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/73675506bb8ab0d4b0df2568886c448e94e1f82d]
+---
+ src/wld_radio.c                   | 4 ++--
+ test/testFullScan/test_fullScan.c | 6 +++---
+ test/testScanSsid/test_scanSsid.c | 6 +++---
+ 3 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/src/wld_radio.c b/src/wld_radio.c
+index 7b5ead6ef932b71fb80304200b9d2d7042cb56d8..8d54864f4fc016eadd540f1c7e966c891291be10 100644
+--- a/src/wld_radio.c
++++ b/src/wld_radio.c
+@@ -3991,7 +3991,7 @@ uint32_t wld_rad_countMappedAPs(T_Radio* pRad) {
+     ASSERT_NOT_NULL(ssidTmplObj, count, ME, "Missing SSID template objs");
+     amxd_object_t* apTmplObj = amxd_object_findf(get_wld_object(), "AccessPoint");
+     ASSERT_NOT_NULL(apTmplObj, count, ME, "Missing AccessPoint template objs");
+-    amxd_object_for_each(instance, itSsid, ssidTmplObj) {
++    amxd_object_iterate(instance, itSsid, ssidTmplObj) {
+         amxd_object_t* ssidObj = amxc_container_of(itSsid, amxd_object_t, it);
+         char* ssidLL = amxd_object_get_cstring_t(ssidObj, "LowerLayers", NULL);
+         T_Radio* pRadOfSsid = (T_Radio*) swla_object_getReferenceObjectPriv(ssidObj, ssidLL);
+@@ -4000,7 +4000,7 @@ uint32_t wld_rad_countMappedAPs(T_Radio* pRad) {
+             continue;
+         }
+         const char* ssidObjName = amxd_object_get_name(ssidObj, AMXD_OBJECT_NAMED);
+-        amxd_object_for_each(instance, itAp, apTmplObj) {
++        amxd_object_iterate(instance, itAp, apTmplObj) {
+             amxd_object_t* apObj = amxc_container_of(itAp, amxd_object_t, it);
+             const char* apObjName = amxd_object_get_name(apObj, AMXD_OBJECT_NAMED);
+             bool matchSsid = (swl_str_matches(ssidObjName, apObjName));
+diff --git a/test/testFullScan/test_fullScan.c b/test/testFullScan/test_fullScan.c
+index 2d321c4c3e1a653aa74d2c69fb03dbdd6a438c18..42ab758c5a3f439775c896f77b13773d7d18fbdc 100644
+--- a/test/testFullScan/test_fullScan.c
++++ b/test/testFullScan/test_fullScan.c
+@@ -275,15 +275,15 @@ static void test_startAndGetScan(void** state _UNUSED) {
+     ttb_mockTimer_goToFutureMs(100);
+     amxd_object_t* chan_template = amxd_object_findf(pRad->pBus, "ScanResults.SurroundingChannels");
+     assert_int_equal(amxd_object_get_instance_count(chan_template), NB_SURROUNDING_CHANNELS);
+-    amxd_object_for_each(instance, it, chan_template) {
++    amxd_object_iterate(instance, it, chan_template) {
+         amxd_object_t* chan_obj = amxc_llist_it_get_data(it, amxd_object_t, it);
+         uint16_t channel = amxd_object_get_uint16_t(chan_obj, "Channel", NULL);
+         amxd_object_t* ap_template = amxd_object_get(chan_obj, "Accesspoint");
+-        amxd_object_for_each(instance, itAp, ap_template) {
++        amxd_object_iterate(instance, itAp, ap_template) {
+             amxd_object_t* ap_obj = amxc_llist_it_get_data(itAp, amxd_object_t, it);
+             amxd_object_t* apSsid_template = amxd_object_get(ap_obj, "SSID");
+             assert_int_equal(amxd_object_get_instance_count(apSsid_template), NB_SSID_PER_BSSID);
+-            amxd_object_for_each(instance, itApSsid, apSsid_template) {
++            amxd_object_iterate(instance, itApSsid, apSsid_template) {
+                 amxd_object_t* apSsid_obj = amxc_llist_it_get_data(itApSsid, amxd_object_t, it);
+                 char* ssid = amxd_object_get_cstring_t(apSsid_obj, "SSID", NULL);
+                 char* bssid = amxd_object_get_cstring_t(apSsid_obj, "BSSID", NULL);
+diff --git a/test/testScanSsid/test_scanSsid.c b/test/testScanSsid/test_scanSsid.c
+index 4ca195eadcc7135c3cf0d33314ba6405a67ccd20..e8d796dd86b42384ac448c6e2c694b52f38762f4 100644
+--- a/test/testScanSsid/test_scanSsid.c
++++ b/test/testScanSsid/test_scanSsid.c
+@@ -177,15 +177,15 @@ static void test_startAndGetScan(void** state _UNUSED) {
+     ttb_mockTimer_goToFutureMs(100);
+     amxd_object_t* chan_template = amxd_object_findf(pRad->pBus, "ScanResults.SurroundingChannels");
+     assert_int_equal(amxd_object_get_instance_count(chan_template), NB_SURROUNDING_CHANNELS);
+-    amxd_object_for_each(instance, it, chan_template) {
++    amxd_object_iterate(instance, it, chan_template) {
+         amxd_object_t* chan_obj = amxc_llist_it_get_data(it, amxd_object_t, it);
+         uint16_t channel = amxd_object_get_uint16_t(chan_obj, "Channel", NULL);
+         amxd_object_t* ap_template = amxd_object_get(chan_obj, "Accesspoint");
+-        amxd_object_for_each(instance, itAp, ap_template) {
++        amxd_object_iterate(instance, itAp, ap_template) {
+             amxd_object_t* ap_obj = amxc_llist_it_get_data(itAp, amxd_object_t, it);
+             amxd_object_t* apSsid_template = amxd_object_get(ap_obj, "SSID");
+             assert_int_equal(amxd_object_get_instance_count(apSsid_template), NB_SSID_PER_BSSID);
+-            amxd_object_for_each(instance, itApSsid, apSsid_template) {
++            amxd_object_iterate(instance, itApSsid, apSsid_template) {
+                 amxd_object_t* apSsid_obj = amxc_llist_it_get_data(itApSsid, amxd_object_t, it);
+                 char* ssid = amxd_object_get_cstring_t(apSsid_obj, "SSID", NULL);
+                 char* bssid = amxd_object_get_cstring_t(apSsid_obj, "BSSID", NULL);

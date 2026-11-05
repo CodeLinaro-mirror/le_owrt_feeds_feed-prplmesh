@@ -1,0 +1,111 @@
+From 250575ebdcc17d6130f966144532b827831d2415 Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Tue, 19 May 2026 11:29:26 +0200
+Subject: [PATCH 13/41] wpaSupp: add api to split mlo_status into separate
+ linkInfo string sections
+
+New api:
+- add api to split wpa_s mlo_status reply into separate linkInfo string sections
+- the link section are headed by link_id token
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/17d1ec2f92131c6f35710fe44be5fbe5fd11db4b]
+---
+ include/wld/wld_wpaSupp_ep_api.h | 14 ++++++++
+ src/nl80211/wld_wpaSupp_ep_api.c | 57 ++++++++++++++++++++++++++++++++
+ 2 files changed, 71 insertions(+)
+
+diff --git a/include/wld/wld_wpaSupp_ep_api.h b/include/wld/wld_wpaSupp_ep_api.h
+index 9515201118b9f46387ec2c74e99ec47f45a4192a..45dc430f6b82a6f37769dd6640e42cd5235c53dd 100644
+--- a/include/wld/wld_wpaSupp_ep_api.h
++++ b/include/wld/wld_wpaSupp_ep_api.h
+@@ -123,6 +123,20 @@ wld_wpaCtrlInterface_t* wld_wpaSupp_ep_getWpaCtrlInterface(T_EndPoint* pEP);
+  */
+ swl_rc_ne wld_wpaSupp_fetchChanSpecFromStatusDetails(const char* statusInfo, swl_chanspec_t* pChSpec);
+ 
++/**
++ * @brief split mlo status info into array of strings including link details
++ *
++ * @param [in] mloStatusInfo mlo status buffer
++ * @param [out] pNbLinks number if link sections
++ * @param [out] pppOutLinksDetails array of strings including found link sections
++ *              (the array and the included strings have to be freed on caller side)
++ *
++ * @return SWL_RC_OK when link sections are found
++ *         SWL_RC_NOT_FOUND if no link is found
++ *         error code otherwise
++ */
++swl_rc_ne wld_wpaSupp_fetchMloLinkStatusDetails(const char* mloStatusInfo, size_t* pNbLinks, char*** pppOutLinksDetails);
++
+ /**
+  * @brief parse mlo_status and extract details relative to specific link, identified by frequency band
+  *
+diff --git a/src/nl80211/wld_wpaSupp_ep_api.c b/src/nl80211/wld_wpaSupp_ep_api.c
+index bbc86da16d598bf24de617b3ff16cafa414c6071..5f4ba61121cd7b678751f2453ef046780c7d5569 100644
+--- a/src/nl80211/wld_wpaSupp_ep_api.c
++++ b/src/nl80211/wld_wpaSupp_ep_api.c
+@@ -672,6 +672,63 @@ swl_rc_ne wld_wpaSupp_fetchChanSpecFromStatusDetails(const char* statusInfo, swl
+     return SWL_RC_OK;
+ }
+ 
++swl_rc_ne wld_wpaSupp_fetchMloLinkStatusDetails(const char* mloStatusInfo, size_t* pNbLinks, char*** pppOutLinksDetails) {
++    ASSERTS_STR(mloStatusInfo, SWL_RC_NOT_FOUND, ME, "empty");
++
++    /**
++     * One link description per band:
++     * link_id=0
++     * freq=2437
++     * ap_link_addr=5a:96:71:ee:2d:05
++     * sta_link_addr=ac:91:9b:ff:f3:59
++     * link_id=1
++     * freq=5180
++     * ap_link_addr=5a:96:71:ee:2c:06
++     * sta_link_addr=ac:91:9b:ff:f3:5a
++     */
++    size_t nbLinks = 0;
++    char** ppLinkDetails = NULL;
++    const char* tok = "link_id=";
++    size_t tokLen = swl_str_len(tok);
++    char* p = NULL;
++    char* pNext = NULL;
++    for(p = strstr(mloStatusInfo, tok), pNext = (p ? strstr(&p[tokLen], tok) : NULL);
++        p != NULL;
++        p = pNext, pNext = pNext ? strstr(&pNext[tokLen], tok) : NULL) {
++        char** newSectionList = realloc(ppLinkDetails, (nbLinks + 1) * sizeof(char*));
++        if(newSectionList == NULL) {
++            SAH_TRACEZ_ERROR(ME, "fail to alloc more sections (cur:%zu)", nbLinks);
++            break;
++        }
++        ppLinkDetails = newSectionList;
++        size_t sectionLen = (pNext > p) ? (size_t) (pNext - p) : swl_str_len(p);
++        if(p[sectionLen - 1] == '\n') {
++            sectionLen--;
++        }
++        char* section = strndup(p, sectionLen);
++        if(section == NULL) {
++            SAH_TRACEZ_ERROR(ME, "fail to save more sections (cur:%zu)", nbLinks);
++            break;
++        }
++        ppLinkDetails[nbLinks] = section;
++        nbLinks += 1;
++    }
++
++    if((pNbLinks != NULL) && (pppOutLinksDetails != NULL)) {
++        SAH_TRACEZ_INFO(ME, "found %zu link sections", nbLinks);
++        *pNbLinks = nbLinks;
++        *pppOutLinksDetails = ppLinkDetails;
++    } else if(ppLinkDetails != NULL) {
++        SAH_TRACEZ_WARNING(ME, "clear %zu section (no target list)", nbLinks);
++        for(size_t i = 0; i < nbLinks; i++) {
++            W_SWL_FREE(ppLinkDetails[i]);
++        }
++        W_SWL_FREE(ppLinkDetails);
++    }
++
++    return (!nbLinks) ? SWL_RC_NOT_FOUND : SWL_RC_OK;
++}
++
+ swl_rc_ne wld_wpaSupp_fetchMloLinkStatusDetailsByFreqBand(const char* mloStatusInfo, swl_freqBandExt_e band, char* linkStatus, size_t linkStatusSize) {
+     ASSERT_TRUE(linkStatus && linkStatusSize, SWL_RC_INVALID_PARAM, ME, "invalid reply buf");
+     swl_str_copy(linkStatus, linkStatusSize, "");

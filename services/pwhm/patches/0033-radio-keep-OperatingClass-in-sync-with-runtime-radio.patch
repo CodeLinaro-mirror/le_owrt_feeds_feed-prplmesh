@@ -1,0 +1,63 @@
+From 973d935137b64ea34e032a9d541eff6e71cfcff9 Mon Sep 17 00:00:00 2001
+From: Mohammed SI ALI <mohammed.siali@softathome.com>
+Date: Tue, 21 Jul 2026 20:14:29 +0200
+Subject: [PATCH 33/41] radio: keep OperatingClass in sync with runtime radio
+ settings
+
+OperatingClass was only recalculated when Channel or OperatingChannelBandwidth changed.
+
+If ACS changes only the runtime bandwidth, CurrentOperatingChannelBandwidth is updated while OperatingClass remained stale.
+
+Recalculate OperatingClass when Channel, OperatingChannelBandwidth, or CurrentOperatingChannelBandwidth changes.
+
+Closes: PPW-2203
+
+Assisted-by: GPT-5.5
+
+Signed-off-by: Mohammed SI ALI <mohammed.siali@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/5dc2e719b4e0b1e9ac402ef7dab19da879ff9090]
+---
+ odl/wld_definitions.odl          | 2 +-
+ src/wld_radio.c                  | 2 +-
+ test/testRadio11be/rad6_base.txt | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/odl/wld_definitions.odl b/odl/wld_definitions.odl
+index e170fe35f90c57ecc967eabb66720fa0ade09f36..d5b2109f0cf6356552c341a3ea162b51e64c6552 100644
+--- a/odl/wld_definitions.odl
++++ b/odl/wld_definitions.odl
+@@ -422,7 +422,7 @@ include "wld_mld.odl";
+ 	on event "dm:object-added" call wld_rad_setVendorData_ocf
+ 		filter 'path matches "WiFi\.Radio\.[0-9]+\.Vendor\.+"';
+ 	on event "dm:object-changed" call wld_rad_setOperatingClass
+-		filter 'path matches "WiFi\.Radio\.[0-9]+\." && (contains("parameters.OperatingChannelBandwidth") || contains("parameters.Channel"))';
++		filter 'path matches "WiFi\.Radio\.[0-9]+\." && (contains("parameters.OperatingChannelBandwidth") || contains("parameters.CurrentOperatingChannelBandwidth") || contains("parameters.Channel"))';
+ 	on event "dm:object-changed" call wld_rad_updatePossibleChannels_ocf
+ 		filter 'path matches "WiFi\.Radio\.[0-9]+\." && (contains("parameters.OperatingFrequencyBand") || contains("parameters.RegulatoryDomain"))';
+ 	on event "dm:object-changed" call wld_rad_setApplicableRadBws
+diff --git a/src/wld_radio.c b/src/wld_radio.c
+index 50627710b09196428c114e5099b51f75bdda5168..8cbba5f1e9a8b12714527c480a365f6b45ead37a 100644
+--- a/src/wld_radio.c
++++ b/src/wld_radio.c
+@@ -4339,7 +4339,7 @@ void _wld_rad_setOperatingClass(const char* const sig_name _UNUSED,
+     ASSERTS_NOT_NULL(object, , ME, "NULL");
+     T_Radio* pRad = wld_rad_fromObj(object);
+     ASSERTS_NOT_NULL(pRad, , ME, "NULL");
+-    SAH_TRACEZ_INFO(ME, "received event dm:object-changed with OperatingChannelBandwidth or Channel");
++    SAH_TRACEZ_INFO(ME, "received event dm:object-changed with channel or bandwidth update");
+     wld_rad_updateOperatingClass(pRad);
+ }
+ 
+diff --git a/test/testRadio11be/rad6_base.txt b/test/testRadio11be/rad6_base.txt
+index 199c7038a330d2a7a7510639d685fa0ac315a1dc..1c4a608ce5fa1e9502967990cf8eb0038e7ab3ef 100644
+--- a/test/testRadio11be/rad6_base.txt
++++ b/test/testRadio11be/rad6_base.txt
+@@ -14,7 +14,7 @@
+     "RxPowerSaveRepeaterEnable": false,
+     "STA_Mode": false,
+     "LastChange": 7,
+-    "OperatingClass": 134,
++    "OperatingClass": 137,
+     "RadCapabilitiesHePhysStr": "",
+     "VHTCapabilities": "AAAAAA==",
+     "TransmitPower": -1,

@@ -1,0 +1,163 @@
+From 72af546bc07dc10dc4d904660a67c691b394aad3 Mon Sep 17 00:00:00 2001
+From: Faiez HENTATI <faiez.hentati_ext@softathome.com>
+Date: Tue, 6 Oct 2026 14:24:20 +0100
+Subject: [PATCH 38/41] pwhm: Add more debug information in wifi debug infos
+
+Extend scripts/debugInfo.sh with additional Wi-Fi diagnostics, including
+regulatory settings, driver statistics, and Wi-Fi data-model statistics.
+
+Also collect endpoint, access-point, and radio debug information,
+including driver configuration, MAC configuration, FSM state, frequency,
+TX power, feature lists, and complete debug dumps.
+
+References: PPW-2491
+Signed-off-by: Faiez HENTATI <faiez.hentati_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/c33b056b79ae78046225fa5d4467fb4c33fe01aa]
+---
+ scripts/debugInfo.sh | 108 +++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 108 insertions(+)
+
+diff --git a/scripts/debugInfo.sh b/scripts/debugInfo.sh
+index 97c2fb21a1ba392c7bbed3025e0d2dcb41037a16..cb17eea1e3b8862bb57b7eb348221a5875611243 100644
+--- a/scripts/debugInfo.sh
++++ b/scripts/debugInfo.sh
+@@ -7,6 +7,9 @@ printCmd(){
+ 
+ echo "##### pWHM WiFi Debug #####"
+ 
++echo "\n\n### Radios Firmware"
++ba-cli -a 'WiFi.Radio.*.FirmwareVersion?' | sed 1d
++
+ echo ""
+ echo ""
+ echo "#### iw dev"
+@@ -17,6 +20,15 @@ echo ""
+ echo "#### iw list"
+ iw list
+ 
++echo ""
++echo ""
++echo "#### iw reg get (Regulatory domain)"
++iw reg get 2>/dev/null || echo "(iw reg get not supported)"
++
++echo ""
++echo ""
++echo "#### ip -s -d link show (Interface statistics and details)"
++ip -s -d link show | grep -A 6 "wlan"
+ 
+ for FILE in /tmp/*_hapd.conf; do
+     echo ""
+@@ -36,6 +48,17 @@ wps_get_status'
+ interfaces=$(iw dev | awk '/Interface/ {iface=$2} /type/ && /AP/ {print iface}' | sort)
+ for INTF in $interfaces; do
+   echo ""
++  echo "#### iw dev info ${INTF}"
++  printCmd "iw dev ${INTF} info"
++
++  echo ""
++  echo "#### iw station dump ${INTF}"
++  printCmd "iw dev ${INTF} station dump"
++
++  echo ""
++  echo "#### iw link ${INTF}"
++  printCmd "iw dev ${INTF} link"
++
+   links=$(iw "${INTF}" info | grep link | awk -F: '{print $1}' | cut -d " " -f 2)
+   [ -z "$links" ] && links="__NO_LINK__"
+ 
+@@ -67,10 +90,95 @@ done
+ 
+ epEnterfaces=$(iw dev | grep -E "Interface|type" | grep -B 1 "managed" | grep Interface | awk '{print $2}'| sort)
+ for INTF in $epEnterfaces; do
++  echo ""
++  echo "#### iw dev info ${INTF}"
++  printCmd "iw dev ${INTF} info"
++
++  echo ""
++  echo "#### iw station dump ${INTF}"
++  printCmd "iw dev ${INTF} station dump"
++
+   echo ""
+   echo "#### wpa_supplicant state ${INTF}"
+   printCmd "$SUDO wpa_cli -p /var/run/wpa_supplicant -i ${INTF} status"
+   printCmd "$SUDO wpa_cli -p /var/run/wpa_supplicant -i ${INTF} dump"
+   printCmd "$SUDO wpa_cli -p /var/run/wpa_supplicant -i ${INTF} list_networks"
+   printCmd "$SUDO wpa_cli -p /var/run/wpa_supplicant -i ${INTF} scan_results"
++  printCmd "$SUDO wpa_cli -p /var/run/wpa_supplicant -i ${INTF} mlo_status" 2>/dev/null || true
++done
++
++apVlanIfaces=$(iw dev | grep -E "Interface|type" | grep -B 1 "AP/VLAN" | grep Interface | awk '{print $2}'| sort)
++if [ ! -z "$apVlanIfaces" ]; then
++  for INTF in $apVlanIfaces; do
++    echo ""
++    echo "#### iw dev info ${INTF} (AP/VLAN - WDS)"
++    printCmd "iw dev ${INTF} info"
++
++    echo ""
++    echo "#### iw station dump ${INTF}"
++    printCmd "iw dev ${INTF} station dump"
++  done
++fi
++
++echo ""
++echo ""
++echo "#### Driver info and statistics"
++for INTF in $(ip link show | grep "^[0-9]" | grep -E "wlan|ath" | awk '{print $2}' | sed 's/:$//'); do
++  echo ""
++  echo "#### Driver stats ${INTF}"
++  printCmd "ethtool -i ${INTF}"
++  printCmd "ethtool -S ${INTF}"
++done
++
++echo ""
++echo ""
++echo "#### WiFi Data Model - Associated Devices Stats"
++printCmd "ba-cli -a WiFi.AccessPoint.*.getStationStats()"
++
++echo ""
++echo ""
++echo "#### WiFi SSID Statistics"
++printCmd "ba-cli -a WiFi.SSID.*.getSSIDStats()"
++
++echo ""
++echo ""
++echo "#### WiFi Radio Statistics"
++printCmd "ba-cli -a WiFi.Radio.*.getRadioStats()"
++
++echo ""
++echo ""
++echo "#### WiFi Radio Air Statistics"
++printCmd "ba-cli -a WiFi.Radio.*.getRadioAirStats()"
++
++echo ""
++echo ""
++echo "#### WiFi Radio Status Histogram"
++printCmd "ba-cli -a WiFi.Radio.*.getStatusHistogram()"
++
++echo ""
++echo ""
++echo "#### WiFi EndPoint Debug State"
++printCmd "ba-cli -a WiFi.EndPoint.*.getDebug()"
++
++echo ""
++echo ""
++echo "#### WiFi EndPoint Statistics"
++printCmd "ba-cli -a WiFi.EndPoint.*.getStats()"
++
++echo ""
++echo ""
++echo "#### WiFi AccessPoint debug operations"
++for op in nl80211StationInfo recentDcs RssiMon dumpWdsInfo nl80211IfaceInfo; do
++  echo ""
++  echo "#### WiFi AccessPoint - $op"
++  printCmd "ba-cli -a WiFi.AccessPoint.*.debug(op=\"$op\")"
++done
++
++echo ""
++echo ""
++echo "#### WiFi Radio debug operations"
++for op in RssiMon DriverConfig MacConfig nl80211IfaceInfo nl80211WiphyInfo RadioLinuxStats AllVapLinuxStats AllEpLinuxStats FSM getFreq nl80211GetTxPower listFeatures dump; do
++  echo ""
++  echo "#### WiFi Radio - $op"
++  printCmd "ba-cli -a WiFi.Radio.*.debug(op=\"$op\")"
+ done

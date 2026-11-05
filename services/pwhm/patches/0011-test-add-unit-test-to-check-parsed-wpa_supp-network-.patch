@@ -1,0 +1,62 @@
+From cf1693ecef6d8f2f4258663e87ad940d048283ee Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Mon, 18 May 2026 13:07:06 +0200
+Subject: [PATCH 11/41] test: add unit test to check parsed wpa_supp network
+ ssid
+
+New test:
+- build wpa_supp conf from dm, then parse it and check matching "ssid"
+param value against EP profile SSID
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/cb7a6e9a2f850a8599ea6638ee0ce6153794a7df]
+---
+ .../test_wpaSupp_cfgFile.c                    | 27 +++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/test/test_wpaSupp_cfgFile/test_wpaSupp_cfgFile.c b/test/test_wpaSupp_cfgFile/test_wpaSupp_cfgFile.c
+index 1642241cda29171ec11eb7b0808e707b176c9f42..6443fa8b9f19dfe3c7ddbd58c333dd02eb17a956 100644
+--- a/test/test_wpaSupp_cfgFile/test_wpaSupp_cfgFile.c
++++ b/test/test_wpaSupp_cfgFile/test_wpaSupp_cfgFile.c
+@@ -109,6 +109,32 @@ static int teardown_suite(void** state _UNUSED) {
+     return 0;
+ }
+ 
++static void s_check_parsed_network_ssid(T_EndPoint* pEP) {
++    ttb_assert_non_null(pEP);
++    ttb_assert_non_null(pEP->wpaSupp);
++    ttb_assert_non_null(pEP->currentProfile);
++
++    swl_rc_ne rc;
++    rc = wld_wpaSupp_cfgFile_createExt(pEP);
++    ttb_assert_int_eq(rc, SWL_RC_OK);
++    wld_wpaSupp_config_t* conf = NULL;
++    ttb_assert_true(wld_wpaSupp_loadConfig(&conf, pEP->wpaSupp->cfgFile));
++    swl_mapChar_t* pNetConf = wld_wpaSupp_getNetworkConfig(conf);
++    const char* ssidVal = swl_mapChar_get(pNetConf, "ssid");
++    char copySsidVal[swl_str_len(ssidVal) + 1];
++    swl_str_copy(copySsidVal, sizeof(copySsidVal), ssidVal);
++    swl_str_stripChar(copySsidVal, '\"');
++    bool matchSsid = swl_str_matches(pEP->currentProfile->SSID, copySsidVal);
++    wld_wpaSupp_deleteConfig(conf);
++    ttb_assert_true(matchSsid);
++}
++
++static void test_check_parsed_network_ssid(void** state _UNUSED) {
++    for(size_t i = 0; i < SWL_FREQ_BAND_MAX; i++) {
++        s_check_parsed_network_ssid(dm.bandList[i].ep);
++    }
++}
++
+ static void s_build_read_freqList(T_EndPoint* pEp) {
+     ttb_assert_non_null(pEp);
+     ttb_assert_non_null(pEp->pRadio);
+@@ -160,6 +186,7 @@ int main(int argc _UNUSED, char* argv[] _UNUSED) {
+     sahTraceAddZone(sahTraceLevel(), "wSupCfg");
+     sahTraceAddZone(sahTraceLevel(), "fileMgr");
+     const struct CMUnitTest tests[] = {
++        cmocka_unit_test(test_check_parsed_network_ssid),
+         cmocka_unit_test(test_build_read_freqList_2g),
+         cmocka_unit_test(test_build_read_freqList_5g),
+         cmocka_unit_test(test_6g_freq_list_when_OnlyScanPscChannels_disabled),

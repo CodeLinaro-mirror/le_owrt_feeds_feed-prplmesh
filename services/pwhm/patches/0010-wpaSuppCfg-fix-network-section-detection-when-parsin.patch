@@ -1,0 +1,60 @@
+From 0bcdb9c091b27e380e5e69ba07f6a5a56b0370f5 Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Mon, 18 May 2026 12:28:33 +0200
+Subject: [PATCH 10/41] wpaSuppCfg: fix network section detection when parsing
+ conf file
+
+Problem:
+- any tuple detected after keyword 'network' is assumed part of network
+configuration, even if section has been closed with brace char
+
+Fix:
+- consider network parameters between 'network' keyword, and closing
+brace character
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/9c5b5e70aa64d601f3579850ec27aa9a3b9bab27]
+---
+ src/nl80211/wld_wpaSupp_cfgManager.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/src/nl80211/wld_wpaSupp_cfgManager.c b/src/nl80211/wld_wpaSupp_cfgManager.c
+index 785fa3dc329233fdf4df0724faab1666549c18c4..ce4aa068f6cd802743a262b98555a2405132903a 100644
+--- a/src/nl80211/wld_wpaSupp_cfgManager.c
++++ b/src/nl80211/wld_wpaSupp_cfgManager.c
+@@ -126,6 +126,7 @@ bool wld_wpaSupp_loadConfig(wld_wpaSupp_config_t** conf, char* path) {
+     char* key;
+     char* value;
+     bool isGlobalParsing = true;
++    bool isNetworkParsing = false;
+ 
+     // Init both global and network maps
+     swl_mapChar_init(&(config->global));
+@@ -148,6 +149,11 @@ bool wld_wpaSupp_loadConfig(wld_wpaSupp_config_t** conf, char* path) {
+         if(end != NULL) {
+             *end = '\0';
+         }
++        if(swl_str_matches(start, "}") && isNetworkParsing) {
++            isNetworkParsing = false;
++            isGlobalParsing = true;
++            continue;
++        }
+         pos = strchr(start, '=');
+         if(pos == NULL) {
+             SAH_TRACEZ_ERROR(ME, "%s: invalid line %s", path, line);
+@@ -160,12 +166,13 @@ bool wld_wpaSupp_loadConfig(wld_wpaSupp_config_t** conf, char* path) {
+ 
+         if(swl_str_matches(key, "network")) {
+             isGlobalParsing = false;
++            isNetworkParsing = true;
+             continue;
+         }
+ 
+         if(isGlobalParsing) {
+             swl_mapChar_add(&(config->global), key, value);
+-        } else {
++        } else if(isNetworkParsing) {
+             swl_mapChar_add(&(config->network), key, value);
+         }
+     }

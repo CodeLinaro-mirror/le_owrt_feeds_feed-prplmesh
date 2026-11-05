@@ -1,0 +1,95 @@
+From c61f8140f7cbbb96d9db88c55a8153419919417b Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Tue, 19 May 2026 15:15:54 +0200
+Subject: [PATCH 19/41] test: add test steps to check nbMloLinks and
+ activeFreqBands of connected endpoints
+
+New test steps:
+- check proper parsing and filling, after mlo/non-mlo connection
+- 1) nbMloLinks (nb link sections in mlo_status)
+- 2) activeFreqBands (freq bands of main link and eventually secondary links)
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/55ee0e5dd87cfde946433bc928219b1acaed7744]
+---
+ test/wld_wpaSupp/test_wld_wpaSupp.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/test/wld_wpaSupp/test_wld_wpaSupp.c b/test/wld_wpaSupp/test_wld_wpaSupp.c
+index 83d20ca49d7a1a967fa5b58c5ef383ad36d08bb7..e248b230e641cf00748d5b30d84569f2697da3e5 100644
+--- a/test/wld_wpaSupp/test_wld_wpaSupp.c
++++ b/test/wld_wpaSupp/test_wld_wpaSupp.c
+@@ -391,6 +391,8 @@ static void test_wld_wpaSupp_parseAllStatusDetailsExt(void** state _UNUSED) {
+                 .localMldLinkMac = (swl_macBin_t) {{0xac, 0x91, 0x9b, 0xff, 0xf2, 0xd9}},
+                 .mldLinkId = 1,
+                 .isMainLink = true,
++                .nbMldLinks = 2,
++                .activeFreqBands = M_SWL_FREQ_BAND_2_4GHZ | M_SWL_FREQ_BAND_5GHZ,
+             }
+         },
+         {
+@@ -435,6 +437,8 @@ static void test_wld_wpaSupp_parseAllStatusDetailsExt(void** state _UNUSED) {
+                 .localMldLinkMac = (swl_macBin_t) {{0xac, 0x91, 0x9b, 0xff, 0xf2, 0xd9}},
+                 .mldLinkId = 1,
+                 .isMainLink = true,
++                .nbMldLinks = 2,
++                .activeFreqBands = M_SWL_FREQ_BAND_2_4GHZ | M_SWL_FREQ_BAND_5GHZ,
+             }
+         },
+         {
+@@ -479,6 +483,8 @@ static void test_wld_wpaSupp_parseAllStatusDetailsExt(void** state _UNUSED) {
+                 .localMldLinkMac = (swl_macBin_t) {{0xac, 0x91, 0x9b, 0xff, 0xf2, 0xd8}},
+                 .mldLinkId = 0,
+                 .isMainLink = false,
++                .nbMldLinks = 2,
++                .activeFreqBands = M_SWL_FREQ_BAND_2_4GHZ | M_SWL_FREQ_BAND_5GHZ,
+             }
+         },
+         {
+@@ -527,6 +533,8 @@ static void test_wld_wpaSupp_parseAllStatusDetailsExt(void** state _UNUSED) {
+                 .localMldLinkMac = g_swl_macBin_null,
+                 .mldLinkId = -1,
+                 .isMainLink = true,
++                .nbMldLinks = 0,
++                .activeFreqBands = M_SWL_FREQ_BAND_5GHZ,
+             }
+         },
+         {
+@@ -567,6 +575,8 @@ static void test_wld_wpaSupp_parseAllStatusDetailsExt(void** state _UNUSED) {
+                 .localMldLinkMac = g_swl_macBin_null,
+                 .mldLinkId = -1,
+                 .isMainLink = true,
++                .nbMldLinks = 0,
++                .activeFreqBands = M_SWL_FREQ_BAND_5GHZ,
+             }
+         },
+         {
+@@ -622,6 +632,8 @@ static void test_wld_wpaSupp_parseAllStatusDetailsExt(void** state _UNUSED) {
+                 .localMldLinkMac = g_swl_macBin_null,
+                 .mldLinkId = -1,
+                 .isMainLink = true,
++                .nbMldLinks = 0,
++                .activeFreqBands = M_SWL_FREQ_BAND_5GHZ,
+             }
+         },
+         {
+@@ -661,6 +673,8 @@ static void test_wld_wpaSupp_parseAllStatusDetailsExt(void** state _UNUSED) {
+                 .localMldLinkMac = g_swl_macBin_null,
+                 .mldLinkId = -1,
+                 .isMainLink = true,
++                .nbMldLinks = 0,
++                .activeFreqBands = M_SWL_FREQ_BAND_5GHZ,
+             }
+         },
+         {
+@@ -730,7 +744,9 @@ static void test_wld_wpaSupp_parseAllStatusDetailsExt(void** state _UNUSED) {
+                 ttb_assert_int_eq(connInfo.mldLinkId, tests[i].expConnInfo.mldLinkId);
+                 ttb_assert_true(swl_typeMacBin_equals(connInfo.peerMldLinkMac, tests[i].expConnInfo.peerMldLinkMac));
+                 ttb_assert_true(swl_typeMacBin_equals(connInfo.localMldLinkMac, tests[i].expConnInfo.localMldLinkMac));
++                ttb_assert_int_eq(connInfo.nbMldLinks, tests[i].expConnInfo.nbMldLinks);
+             }
++            ttb_assert_int_eq(connInfo.activeFreqBands, tests[i].expConnInfo.activeFreqBands);
+         }
+     }
+ }

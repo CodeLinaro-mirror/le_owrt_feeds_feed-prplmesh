@@ -1,0 +1,82 @@
+From a47dc350ca9d4e18efda824ef504c492b20ef708 Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Sat, 16 May 2026 19:55:56 +0200
+Subject: [PATCH 05/41] ep: fix passive main Ep does not start to reconnect
+
+Problem:
+- when an MLO repeater disconnected, the system didn't
+try to reconnect.
+
+Cause:
+- the repeater was connected to a dual band HGW, while repeater
+was tri-band.
+- This meant that the "primary endpoint" was in passive mode.
+- Due to some circumstances, the driver disconnected the BSSID and
+endpoint, but the primary endpoint was never properly reset.
+
+Solution:
+- when all endpoints are disconnected, and the primary
+EP is passive, put the primary EP as disconnected.
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/4bf465713023aed2ddfe66fca5dd1ca0b821eea5]
+---
+ odl/wld_endpoint.odl |  2 +-
+ src/wld_endpoint.c   | 23 +++++++++++++++++++++++
+ 2 files changed, 24 insertions(+), 1 deletion(-)
+
+diff --git a/odl/wld_endpoint.odl b/odl/wld_endpoint.odl
+index 7990ebbb181a57bde35cceff7f6c14122e3331a7..45ac5833080d58c3efafb310efb394a6337e68c2 100644
+--- a/odl/wld_endpoint.odl
++++ b/odl/wld_endpoint.odl
+@@ -121,7 +121,7 @@
+ 		 * * Connecting: The endpoint has found a valid AP, and is trying to connect to this AP.
+ 		 * * WPS_Pairing: The endpoint is currently in a WPS_Pairing state.
+ 		 * * Connected: The endpoint is connected, and able to communicate with AP
+-		 * * Passive: The endpoint is part of an MLDSta, and another MLDSta is connecting, causing this to stop discovery  / connection attempts.
++		 * * Passive: The endpoint is part of an MLDSta, and another endpoint in the MLDSta is connecting(ed), causing this to stop discovery  / connection attempts.
+ 		 * * Error: The endpoint is unable to perform a connection due to unknown reasons
+ 		 * * Error_Misconfigured: The endpoint is unable to connect, because the current configuration is not supported or sufficient.
+ 		 **/
+diff --git a/src/wld_endpoint.c b/src/wld_endpoint.c
+index c5215c89101300b1abc6562df4c614ad86ca2dea..861ec9ac1d39b9bdbda558ae28f987aca8e750b3 100644
+--- a/src/wld_endpoint.c
++++ b/src/wld_endpoint.c
+@@ -1421,6 +1421,25 @@ void syncData_EndPoint2OBJ(T_EndPoint* pEP) {
+ 
+ }
+ 
++/**
++ * @brief ensure resetting passive primary bSTAMLD link status when MLO is fully disconnected:
++ * If primary EP is passive, then it needs to be disconnected.
++ *
++ * @param pEP pointer to endpoint context (reference bstamld link)
++ *
++ * @return void
++ */
++static void s_checkMldConnection(T_EndPoint* pEP) {
++    T_EndPoint* pPrimLinkEp = wld_epMld_getPrimaryLinkEp(pEP);
++    if((pPrimLinkEp == NULL) || (wld_epMld_countConnectedLinkEps(pEP) > 0)) {
++        return;
++    }
++    if(pPrimLinkEp->connectionStatus == EPCS_PASSIVE) {
++        SAH_TRACEZ_WARNING(ME, "%s: disconnecting primary EP due to aux EP %s disconnect", pPrimLinkEp->Name, pEP->Name);
++        wld_endpoint_setConnectionStatus(pPrimLinkEp, EPCS_DISCONNECTED, EPE_NONE);
++    }
++}
++
+ void wld_endpoint_setConnectionStatus(T_EndPoint* pEP, wld_epConnectionStatus_e connectionStatus, wld_epError_e error) {
+     wld_intfStatus_e status = APSTI_ENABLED;
+     swl_mlo_role_e mldRole = SWL_MLO_ROLE_NONE;
+@@ -1474,6 +1493,10 @@ void wld_endpoint_setConnectionStatus(T_EndPoint* pEP, wld_epConnectionStatus_e
+         pEP->reconnect_count = 0;
+         amxp_timer_stop(pEP->reconnectTimer);
+     }
++
++    if((previousStatus == EPCS_CONNECTED) && !connected && (mldRole == SWL_MLO_ROLE_AUXILIARY)) {
++        s_checkMldConnection(pEP);
++    }
+ }
+ 
+ /**

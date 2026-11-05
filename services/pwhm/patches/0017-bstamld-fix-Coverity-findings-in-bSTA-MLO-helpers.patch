@@ -1,0 +1,117 @@
+From a1fb4d5da62a01ee3977ead91516f4417f6ea575 Mon Sep 17 00:00:00 2001
+From: Mohammed SI ALI <mohammed.siali@softathome.com>
+Date: Wed, 26 Aug 2026 14:10:03 +0200
+Subject: [PATCH 17/41] bstamld: fix Coverity findings in bSTA MLO helpers
+
+- Replace assertion returns with explicit MLO link-list cleanup in
+both parsing callers so ownership is visible on every exit path.
+
+References: PPM-4222
+Signed-off-by: Mohammed SI ALI <mohammed.siali@softathome.com>
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/37a36e376cb75159a77069f346c382570c4f3b67]
+---
+ src/nl80211/wld_wpaSupp_ep_api.c | 58 +++++++++++++++++---------------
+ 1 file changed, 30 insertions(+), 28 deletions(-)
+
+diff --git a/src/nl80211/wld_wpaSupp_ep_api.c b/src/nl80211/wld_wpaSupp_ep_api.c
+index cd9337de0ce40762d0dddb083f8df764466b4b7c..25f5d5d41d94579ff2b2f00b74071dbb2704661f 100644
+--- a/src/nl80211/wld_wpaSupp_ep_api.c
++++ b/src/nl80211/wld_wpaSupp_ep_api.c
+@@ -141,6 +141,24 @@ static int32_t s_getMloLinkStatusDetailsByFreqBand(size_t nbLinks, char** ppLink
+     return SWL_RC_NOT_FOUND;
+ }
+ 
++/**
++ * @brief Free a list of parsed MLO link status sections
++ *
++ * @param nbLinks number of allocated link status sections
++ * @param ppLinkDetails array containing the allocated link status sections
++ *
++ * @return void
++ */
++static void s_freeMloLinkStatusDetails(size_t nbLinks, char** ppLinkDetails) {
++    if(ppLinkDetails == NULL) {
++        return;
++    }
++    for(size_t i = 0; i < nbLinks; i++) {
++        W_SWL_FREE(ppLinkDetails[i]);
++    }
++    W_SWL_FREE(ppLinkDetails);
++}
++
+ /**
+  * @brief parse mlo status information and fetch specific link matching given freq band
+  *
+@@ -179,7 +197,11 @@ static swl_rc_ne s_parseAllMloStatusDetailsExt(
+     size_t nbLinks = 0;
+     char** ppLinksDetails = NULL;
+     swl_rc_ne rc = wld_wpaSupp_fetchMloLinkStatusDetails(mloStatusBuf, &nbLinks, &ppLinksDetails);
+-    ASSERTS_TRUE(swl_rc_isOk(rc), rc, ME, "no links info");
++    if(!swl_rc_isOk(rc)) {
++        SAH_TRACEZ_INFO(ME, "no links info");
++        s_freeMloLinkStatusDetails(nbLinks, ppLinksDetails);
++        return rc;
++    }
+ 
+     rc = SWL_RC_NOT_FOUND;
+     int32_t pos = s_getMloLinkStatusDetailsByFreqBand(nbLinks, ppLinksDetails, linkBand, mloLinkStatusBuf, sizeof(mloLinkStatusBuf));
+@@ -197,10 +219,7 @@ static swl_rc_ne s_parseAllMloStatusDetailsExt(
+         swl_str_copy(mloReply, mloReplySize, mloLinkStatusBuf);
+     }
+ 
+-    for(size_t i = 0; i < nbLinks; i++) {
+-        W_SWL_FREE(ppLinksDetails[i]);
+-    }
+-    W_SWL_FREE(ppLinksDetails);
++    s_freeMloLinkStatusDetails(nbLinks, ppLinksDetails);
+     return rc;
+ }
+ 
+@@ -715,24 +734,6 @@ swl_rc_ne wld_wpaSupp_fetchChanSpecFromStatusDetails(const char* statusInfo, swl
+     return SWL_RC_OK;
+ }
+ 
+-/**
+- * @brief Free a list of parsed MLO link status sections
+- *
+- * @param nbLinks number of allocated link status sections
+- * @param ppLinkDetails array containing the allocated link status sections
+- *
+- * @return void
+- */
+-static void s_freeMloLinkStatusDetails(size_t nbLinks, char** ppLinkDetails) {
+-    if(ppLinkDetails == NULL) {
+-        return;
+-    }
+-    for(size_t i = 0; i < nbLinks; i++) {
+-        W_SWL_FREE(ppLinkDetails[i]);
+-    }
+-    W_SWL_FREE(ppLinkDetails);
+-}
+-
+ swl_rc_ne wld_wpaSupp_fetchMloLinkStatusDetails(const char* mloStatusInfo, size_t* pNbLinks, char*** pppOutLinksDetails) {
+     ASSERTS_NOT_NULL(pNbLinks, SWL_RC_INVALID_PARAM, ME, "NULL");
+     ASSERTS_NOT_NULL(pppOutLinksDetails, SWL_RC_INVALID_PARAM, ME, "NULL");
+@@ -800,15 +801,16 @@ swl_rc_ne wld_wpaSupp_fetchMloLinkStatusDetailsByFreqBand(const char* mloStatusI
+     size_t nbLinks = 0;
+     char** ppLinksDetails = NULL;
+     swl_rc_ne rc = wld_wpaSupp_fetchMloLinkStatusDetails(mloStatusInfo, &nbLinks, &ppLinksDetails);
+-    ASSERTS_TRUE(swl_rc_isOk(rc), rc, ME, "no links info");
++    if(!swl_rc_isOk(rc)) {
++        SAH_TRACEZ_INFO(ME, "no links info");
++        s_freeMloLinkStatusDetails(nbLinks, ppLinksDetails);
++        return rc;
++    }
+ 
+     int32_t pos = s_getMloLinkStatusDetailsByFreqBand(nbLinks, ppLinksDetails, band, linkStatus, linkStatusSize);
+     rc = (pos >= 0) ? SWL_RC_OK : SWL_RC_NOT_FOUND;
+ 
+-    for(size_t i = 0; i < nbLinks; i++) {
+-        W_SWL_FREE(ppLinksDetails[i]);
+-    }
+-    W_SWL_FREE(ppLinksDetails);
++    s_freeMloLinkStatusDetails(nbLinks, ppLinksDetails);
+ 
+     return rc;
+ }

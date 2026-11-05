@@ -1,0 +1,83 @@
+From 83de24421cde45ef2476550d075d5925d8aa2119 Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Fri, 18 Sep 2026 16:51:36 +0200
+Subject: [PATCH 25/41] nl80211: fix error flooding when trying to get nl info
+ of disabled vaps
+
+Problem:
+- error msg flooding, indicating freqband mismatch of disabled APMLD
+link with one of bstamld iface active links
+
+Cause:
+- wld_ssid_nl80211_getInterfaceInfoExt was trying to fetch link by
+linkMac across all available active nl mlo links, without checking
+whether the resulting iface type (ap/sta) is matching the SSID type
+(AP/EP)
+- error was displayed when freqBand of SSID's radio is not matching the
+fetched link's freq band.
+
+Fix:
+- ensure matching fetched iface type with SSID type, before looking in
+included links to locate the mapped link info
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/64521b017531ed565ee59cba2d2b26bf7bf987f4]
+---
+ src/nl80211/wld_ssid_nl80211.c | 24 ++++++++++++++----------
+ 1 file changed, 14 insertions(+), 10 deletions(-)
+
+diff --git a/src/nl80211/wld_ssid_nl80211.c b/src/nl80211/wld_ssid_nl80211.c
+index c404fd2912a306161652c11b20982f442799d14f..825b0067ce98dbc276214c621839211f30dd62c5 100644
+--- a/src/nl80211/wld_ssid_nl80211.c
++++ b/src/nl80211/wld_ssid_nl80211.c
+@@ -71,6 +71,16 @@
+ 
+ #define ME "nlSSID"
+ 
++/**
++ * @brief ensure ssid type matching against nl80211 iface type
++ */
++static bool s_matchSsidIfType(T_SSID* pSSID, wld_nl80211_ifaceInfo_t* pIfaceInfo) {
++    ASSERTS_NOT_NULL(pSSID, false, ME, "NULL");
++    ASSERTS_NOT_NULL(pIfaceInfo, false, ME, "NULL");
++    return ((pIfaceInfo->isSta && (wld_ssid_getType(pSSID) == WLD_SSID_TYPE_EP)) ||
++            (pIfaceInfo->isAp && (wld_ssid_getType(pSSID) == WLD_SSID_TYPE_AP)));
++}
++
+ swl_rc_ne wld_ssid_nl80211_getInterfaceInfoExt(T_SSID* pSSID, wld_nl80211_ifaceInfo_t* pIfaceInfo, int32_t* pLinkId) {
+     wld_nl80211_ifaceInfo_t ifaceInfo;
+     memset(&ifaceInfo, 0, sizeof(ifaceInfo));
+@@ -87,13 +97,15 @@ swl_rc_ne wld_ssid_nl80211_getInterfaceInfoExt(T_SSID* pSSID, wld_nl80211_ifaceI
+ 
+     swl_rc_ne rc = SWL_RC_NOT_AVAILABLE;
+     if(((ifIndex = wld_ssid_nl80211_getPrimaryLinkIfIndex(pSSID)) > 0) &&
+-       (wld_nl80211_getInterfaceInfo(wld_nl80211_getSharedState(), ifIndex, &ifaceInfo) >= SWL_RC_OK)) {
++       (wld_nl80211_getInterfaceInfo(wld_nl80211_getSharedState(), ifIndex, &ifaceInfo) >= SWL_RC_OK) &&
++       s_matchSsidIfType(pSSID, &ifaceInfo)) {
+         /** Fetch link in primary nl80211 iface info, with linkId and relative radio's freq band */
+         rc = wld_nl80211_fetchIfaceLinkInfo(&ifaceInfo, pRad->operatingFrequencyBand, pLinkMac, wld_ssid_getMLDLinkID(pSSID), &linkId);
+     }
+     if(rc == SWL_RC_NOT_AVAILABLE) {
+         /** Search link across all nl80211 ifaces, with linkMac and relative radio's freq band */
+-        if((rc = wld_nl80211_findIfaceByLinkMac(wld_nl80211_getSharedState(), pLinkMac, &ifaceInfo, &linkId)) >= SWL_RC_OK) {
++        if((wld_nl80211_findIfaceByLinkMac(wld_nl80211_getSharedState(), pLinkMac, &ifaceInfo, &linkId) >= SWL_RC_OK) &&
++           s_matchSsidIfType(pSSID, &ifaceInfo)) {
+             rc = wld_nl80211_fetchIfaceLinkInfo(&ifaceInfo, pRad->operatingFrequencyBand, pLinkMac, linkId, &linkId);
+         }
+     }
+@@ -101,14 +113,6 @@ swl_rc_ne wld_ssid_nl80211_getInterfaceInfoExt(T_SSID* pSSID, wld_nl80211_ifaceI
+                  pSSID->Name, wld_ssid_getMLDLinkID(pSSID),
+                  swl_freqBandExt_str[pRad->operatingFrequencyBand], swl_typeMacBin_toBuf32Ref(pLinkMac).buf);
+ 
+-    /** ensure ssid type matching */
+-    if((ifaceInfo.isSta && (wld_ssid_getType(pSSID) != WLD_SSID_TYPE_EP)) ||
+-       (ifaceInfo.isAp && (wld_ssid_getType(pSSID) != WLD_SSID_TYPE_AP))) {
+-        SAH_TRACEZ_ERROR(ME, "SSID[%s] mismatching type of iface (ifName:%s)(ifId:%u)",
+-                         pSSID->Name, ifaceInfo.name, ifaceInfo.ifIndex);
+-        return SWL_RC_ERROR;
+-    }
+-
+     if(linkId >= 0) {
+         const wld_nl80211_ifaceMloLinkInfo_t* pLinkInfo = wld_nl80211_fetchIfaceMloLinkById(&ifaceInfo, linkId);
+         ASSERT_NOT_NULL(pLinkInfo, SWL_RC_ERROR, ME, "SSID[%s]: no linkId(%d) in iface (ifName:%s)(ifId:%u) nLinks(%u)",

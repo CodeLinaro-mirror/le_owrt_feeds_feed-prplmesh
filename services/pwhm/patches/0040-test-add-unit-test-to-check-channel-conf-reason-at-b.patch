@@ -1,0 +1,59 @@
+From 88e1a67f60f3240106a119294d182d97707c010e Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Wed, 14 Oct 2026 19:06:29 +0200
+Subject: [PATCH 40/41] test: add unit test to check channel conf reason at
+ boot time
+
+New unit test:
+- check that new AUTO channel reported on boot, is seen as
+first channel change reason (ie loaded conf was overridden by internal
+ACS)
+
+References: PPW-2468
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/b93d283128bc8e68f1408769e0bd82f14532a072]
+---
+ test/wld_chanMgt/test_wld_rad_chanMgt.c | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/test/wld_chanMgt/test_wld_rad_chanMgt.c b/test/wld_chanMgt/test_wld_rad_chanMgt.c
+index bd321fffc1a5e70c530e0806614b1c767a4156f5..7ced1958b9b3ddff73b5f226e216493586cdaf3a 100644
+--- a/test/wld_chanMgt/test_wld_rad_chanMgt.c
++++ b/test/wld_chanMgt/test_wld_rad_chanMgt.c
+@@ -108,6 +108,28 @@ static swl_rc_ne s_setTargetAndWait(T_Radio* pR, swl_chanspec_t chanspec, bool d
+     return retVal;
+ }
+ 
++static void test_wld_checkBootChanspec(void** state _UNUSED) {
++    /** check target chanspec info at boot (after conf loading) */
++    ttb_assert_int_eq(amxc_llist_size(&rad2g->channelChangeList), 0);
++    ttb_assert_int_eq(wld_chanmgt_getCurChannel(rad2g), 0);
++    ttb_assert_int_eq(wld_chanmgt_getTgtChannel(rad2g), rad2g->channel);
++    /** emulate radio startup with internal ACS selecting same initial chanspec */
++    swl_chanspec_t reportedChSpec = wld_chanmgt_getTgtChspec(rad2g);
++    ttb_assert_true(swl_rc_isOk(wld_chanmgt_reportCurrentChanspec(rad2g, reportedChSpec, CHAN_REASON_AUTO)));
++    ttb_mockTimer_goToFutureMs(100);
++    /** ensure the current chanspec is updated with reason AUTO */
++    ttb_assert_int_eq(rad2g->channel, reportedChSpec.channel);
++    ttb_assert_int_eq(wld_chanmgt_getCurChannel(rad2g), reportedChSpec.channel);
++    ttb_assert_int_eq(rad2g->currentChanspec.reason, CHAN_REASON_AUTO)
++    amxc_llist_it_t* it = amxc_llist_get_last(&rad2g->channelChangeList);
++    ttb_assert_non_null(it);
++    wld_rad_chanChange_t* change = amxc_llist_it_get_data(it, wld_rad_chanChange_t, it);
++    ttb_assert_non_null(change);
++    ttb_assert_int_eq(change->reason, CHAN_REASON_AUTO);
++    ttb_assert_int_eq(change->old.channel, 0);
++    ttb_assert_true(swl_typeChanspecExt_equals(change->new, wld_chanmgt_getCurChspec(rad2g)));
++}
++
+ static void test_wld_setTargetChanspec(void** state _UNUSED) {
+     T_Radio* rad = NULL;
+     swl_chanspec_t chanspec2 = SWL_CHANSPEC_NEW(6, SWL_BW_20MHZ, SWL_FREQ_BAND_EXT_2_4GHZ);
+@@ -1068,6 +1090,7 @@ int main(int argc _UNUSED, char* argv[] _UNUSED) {
+     sahTraceAddZone(sahTraceLevel(), "rad");
+     sahTraceAddZone(sahTraceLevel(), "chanMgt");
+     const struct CMUnitTest tests[] = {
++        cmocka_unit_test(test_wld_checkBootChanspec),
+         cmocka_unit_test(test_wld_setTargetChanspec),
+         cmocka_unit_test(test_wld_setOperChanBw),
+         cmocka_unit_test(test_wld_reportCurrentChanspec),

@@ -1,0 +1,35 @@
+From a78a573f2dd59a470fc904cd8e52712e74b45585 Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Fri, 2 Oct 2026 11:58:35 +0200
+Subject: [PATCH 32/41] coverity: fix coverity warning (unrelated code)
+
+Problem:
+- missing retcode checking when loading current log zone from rpc output
+
+Fix:
+- display error log when failing to parse rpc output (no assertion is
+needed)
+
+References: PPM-4222
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/4f99f0199591c7caab49fbe71a983b152c35ce01]
+---
+ src/VendorModule/wld_vendorModule.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/VendorModule/wld_vendorModule.c b/src/VendorModule/wld_vendorModule.c
+index 7f206c42d5f235c9194128deea140a2aefd39575..c366feb0dbd0a02d85a3e88e9bef8b3551b70f68 100644
+--- a/src/VendorModule/wld_vendorModule.c
++++ b/src/VendorModule/wld_vendorModule.c
+@@ -255,7 +255,10 @@ static void s_getCurrentTraceZones(swl_map_t* pCurrZoneMaps) {
+     amxc_var_init(&args);
+     amxc_var_set_type(&args, AMXC_VAR_ID_HTABLE);
+     amxd_object_invoke_function(get_wld_object(), "list_trace_zones", &args, &ret);
+-    swl_type_fromVariant(&privTraceZoneMap.type, pCurrZoneMaps, &ret);
++    bool rc = swl_type_fromVariant(&privTraceZoneMap.type, pCurrZoneMaps, &ret);
++    if(!rc) {
++        SAH_TRACEZ_ERROR(ME, "Fail to load current trace zones");
++    }
+     amxc_var_clean(&ret);
+     amxc_var_clean(&args);
+ }

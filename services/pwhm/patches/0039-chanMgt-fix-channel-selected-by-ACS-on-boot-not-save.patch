@@ -1,0 +1,58 @@
+From ecbccf71f14fde738641d12ce47270ca52edde7e Mon Sep 17 00:00:00 2001
+From: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Date: Thu, 8 Oct 2026 18:31:41 +0200
+Subject: [PATCH 39/41] chanMgt: fix channel selected by ACS on boot not saved
+ in datamodel
+
+Problem:
+- ACS has selected new 2g channel 1 on boot but it is not displayed in
+WiFi.Radio.Channel
+
+Cause:
+- the new selected channel was matching the initial channel for 2g,
+which was assumed as current INITIAL, at radio detection step,
+but it was not really applied, as hostapd was not yet started
+- later when the channel 1 is reported with ACS-COMPLETED, it is not
+saved in the DM, as already matching the Radio CurrentChanspec
+
+Fix:
+- at boot time, only initialize target default chanspec
+and do not initialize current (reported) chanspec, as it not really
+applied (radio is not yet initialized)
+
+Closes: PPW-2468
+Signed-off-by: Ahmed Amine HAOUES <ahmed-amine.haoues_ext@softathome.com>
+Upstream-Status: Backport [https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/commit/729ecfaaa9992a7254bea04ea6fea871f7b044f5]
+---
+ src/ChannelManagement/wld_chanmgt.c | 4 +++-
+ test/testRadio11be/rad5_base.txt    | 2 +-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/src/ChannelManagement/wld_chanmgt.c b/src/ChannelManagement/wld_chanmgt.c
+index 5798298ca0f6831176732976ffd88464ecb72d40..7c639102507c1877ea29ee0a3b6c667aa114914e 100644
+--- a/src/ChannelManagement/wld_chanmgt.c
++++ b/src/ChannelManagement/wld_chanmgt.c
+@@ -1106,7 +1106,9 @@ void wld_chanmgt_checkInitChannel(T_Radio* pRad) {
+     if(swl_chanspec_channelToMHzDef(&radChanspec, 0) != 0) {
+         defaultChanspec.channel = wld_chanmgt_getBetterDefaultChannel(defaultChanspec.band, radChanspec.channel, defaultChanspec.channel);
+     }
+-    wld_chanmgt_reportCurrentChanspec(pRad, defaultChanspec, CHAN_REASON_INITIAL);
++    // at initialization step, no channel is applied, only default target is set
++    swl_chanspec_fromDmExt(&pRad->currentChanspec.chanspec, 0, SWL_RAD_BW_AUTO, pRad->operatingFrequencyBand, 0, SWL_CHANSPEC_EXT_AUTO);
++    wld_chanmgt_setTargetChanspec(pRad, defaultChanspec, false, CHAN_REASON_INITIAL, NULL);
+ }
+ 
+ /**
+diff --git a/test/testRadio11be/rad5_base.txt b/test/testRadio11be/rad5_base.txt
+index d18f010d9c6d396f03e1ce1489d60df7a92128df..41e81b349cd1b028401da4530aa963bd83542324 100644
+--- a/test/testRadio11be/rad5_base.txt
++++ b/test/testRadio11be/rad5_base.txt
+@@ -34,7 +34,7 @@
+     "RIFSEnabled": "Default",
+     "AutoChannelEnable": false,
+     "AirtimeFairnessEnabled": true,
+-    "ChannelBandwidthChangeReason": "MANUAL",
++    "ChannelBandwidthChangeReason": "INITIAL",
+     "RadCapabilitiesVHTStr": "",
+     "RxBeamformingCapsAvailable": "",
+     "DTIMPeriod": 3,
