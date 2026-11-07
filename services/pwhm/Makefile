@@ -8,7 +8,7 @@ SHORT_DESCRIPTION:=prplMesh WHM
 
 PKG_SOURCE:=pwhm-v7.6.59.tar.gz
 PKG_SOURCE_URL:=https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/archive/v7.6.59
-PKG_HASH:=03ed0f7d813a5867fe7892e75475af127818c52dfbfc9ee6c0be3dfb3f7b9b14
+PKG_HASH:=e6473944747c09592a6725411a496bc82531fef4113cfbf86d658d31e706a014
 PKG_BUILD_DIR:=$(BUILD_DIR)/pwhm-v7.6.59
 PKG_MAINTAINER:=Soft At Home <support.opensource@softathome.com>
 PKG_LICENSE:=BSD-2-Clause-Patent
