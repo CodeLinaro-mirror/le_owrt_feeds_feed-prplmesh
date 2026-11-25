@@ -3,13 +3,14 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=pwhm
-PKG_VERSION:=v8.0.1
+PKG_VERSION:=bugfix_PPM-4368-forward-radio-events-from-bss-interfaces
 SHORT_DESCRIPTION:=prplMesh WHM
 
-PKG_SOURCE:=pwhm-v8.0.1.tar.gz
-PKG_SOURCE_URL:=https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm/-/archive/v8.0.1
-PKG_HASH:=6f7ced20bf73f46bcb68d25a395eca1605e3c03f07f97f7154f1a8a02944e3b5
-PKG_BUILD_DIR:=$(BUILD_DIR)/pwhm-v8.0.1
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_VERSION:=bugfix_PPM-4368-forward-radio-events-from-bss-interfaces
+PKG_SOURCE_URL:=https://gitlab.com/prpl-foundation/prplmesh/pwhm/plugins/pwhm.git
+PKG_MIRROR_HASH:=skip
+PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 PKG_MAINTAINER:=Soft At Home <support.opensource@softathome.com>
 PKG_LICENSE:=BSD-2-Clause-Patent
 PKG_LICENSE_FILES:=LICENSE
